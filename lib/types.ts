@@ -1,36 +1,23 @@
-export type AssetStatus =
-  | 'INTAKE'
-  | 'SCREENING'
-  | 'VERIFICATION'
-  | 'DUE_DILIGENCE'
-  | 'MARKET_RESEARCH'
-  | 'TECHNICAL_ASSESSMENT'
-  | 'FINANCIAL_MODEL'
-  | 'VALUATION'
-  | 'EXIT_STRATEGY'
-  | 'BUYER_INTELLIGENCE'
-  | 'DEAL_PREP'
-  | 'NEGOTIATION'
-  | 'CLOSING';
-
 export type Asset = {
   id: string;
+  assetId: string;
   name: string;
   assetClass: string;
   country: string;
   city: string;
   address: string;
   description: string;
-  status: AssetStatus;
   ownerObjective: string;
   transactionType: string;
   operatingStatus: string;
   askingPrice: number | null;
+  status: string;
   createdAt: string;
 };
 
-export type DepartmentTask = {
+export type WorkflowTask = {
   id: string;
+  assetId: string;
   department: string;
   title: string;
   status: 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'NEEDS_REVIEW' | 'COMPLETED';
@@ -38,20 +25,111 @@ export type DepartmentTask = {
   dueDate: string;
   confidence: number;
   blockers: string[];
+  dependsOn: string[];
 };
 
-export type Source = {
-  name: string;
-  url: string;
-  date: string;
-  confidence: number;
-};
-
-export type Finding = {
+export type WorkflowFinding = {
   id: string;
+  assetId: string;
+  department: string;
   title: string;
   text: string;
-  department: string;
   confidence: number;
-  source: Source;
+  source: {
+    name: string;
+    url: string;
+    date: string;
+    confidence: number;
+  };
+};
+
+export type ApprovalGate = {
+  action: string;
+  requiredRole: 'Chairman' | 'CEO' | 'Legal' | 'Finance';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reason: string;
+};
+
+export type AssetWorkflowState = {
+  assetId: string;
+  stage: string;
+  status: 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'NEEDS_REVIEW' | 'COMPLETED';
+  tasks: WorkflowTask[];
+  findings: WorkflowFinding[];
+  approvals: ApprovalGate[];
+};
+
+export const mockAssets: Asset[] = [
+  {
+    id: 'AS-001',
+    assetId: 'AS-001',
+    name: 'Amoun Leather Factory',
+    assetClass: 'Industrial Facility',
+    country: 'Egypt',
+    city: 'El Salheya',
+    address: 'Sharqia Industrial Zone',
+    description: 'Former industrial leather processing facility requiring legal and technical validation before any strategic exit path is recommended.',
+    ownerObjective: 'Sell or restart under a strategic acquirer',
+    transactionType: 'Asset Sale',
+    operatingStatus: 'Closed',
+    askingPrice: null,
+    status: 'INTAKE',
+    createdAt: '2026-10-11',
+  },
+  {
+    id: 'AS-002',
+    assetId: 'AS-002',
+    name: 'Nile Logistics Park',
+    assetClass: 'Logistics Real Estate',
+    country: 'Egypt',
+    city: 'Cairo',
+    address: 'Industrial Ring Road',
+    description: 'Regional logistics and distribution asset under review for strategic sale and value optimization.',
+    ownerObjective: 'Exit via sale to strategic operator',
+    transactionType: 'Asset Sale',
+    operatingStatus: 'Operational',
+    askingPrice: 32000000,
+    status: 'DUE_DILIGENCE',
+    createdAt: '2026-10-08',
+  },
+];
+
+export const workflowStages = [
+  'INTAKE',
+  'SCREENING',
+  'VERIFICATION',
+  'DUE_DILIGENCE',
+  'MARKET_RESEARCH',
+  'TECHNICAL_ASSESSMENT',
+  'FINANCIAL_MODEL',
+  'VALUATION',
+  'EXIT_STRATEGY',
+  'BUYER_INTELLIGENCE',
+  'DEAL_PREP',
+  'NEGOTIATION',
+  'CLOSING',
+];
+
+export const departmentProgress = [
+  { name: 'CEO AI Agent', status: 'RUNNING', progress: 82, owner: 'Chairman / CEO' },
+  { name: 'Legal & Due Diligence', status: 'QUEUED', progress: 26, owner: 'Legal Team' },
+  { name: 'Industrial & Technical Assessment', status: 'BLOCKED', progress: 14, owner: 'Technical Team' },
+  { name: 'Market Intelligence', status: 'RUNNING', progress: 58, owner: 'Research Desk' },
+  { name: 'Financial Analysis', status: 'NEEDS_REVIEW', progress: 49, owner: 'Finance' },
+  { name: 'Valuation', status: 'QUEUED', progress: 12, owner: 'Valuation Lead' },
+  { name: 'Buyer Intelligence', status: 'QUEUED', progress: 0, owner: 'Buyer Research' },
+  { name: 'Risk & Compliance', status: 'QUEUED', progress: 0, owner: 'Compliance' },
+];
+
+export const defaultAssetForm = {
+  name: 'Amoun Leather Factory',
+  assetClass: 'Industrial Facility',
+  country: 'Egypt',
+  city: 'El Salheya',
+  address: 'Sharqia Industrial Zone',
+  description: 'Former industrial leather processing facility requiring legal and technical validation before any strategic exit path is recommended.',
+  ownerObjective: 'Sell or restart under a strategic acquirer',
+  transactionType: 'Asset Sale',
+  operatingStatus: 'Closed',
+  askingPrice: '',
 };
