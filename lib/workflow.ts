@@ -1,4 +1,4 @@
-import { mockAssets } from '@/lib/types';
+import type { AssetWorkflowState } from '@/lib/types';
 
 export const initializeWorkflow = (assetId: string): AssetWorkflowState => ({
   assetId,
