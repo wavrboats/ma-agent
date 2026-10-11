@@ -16,9 +16,110 @@ const defaultForm = {
   askingPrice: '',
 };
 
+type AssetUploadRecord = Partial<typeof defaultForm>;
+
+const normalizeAssetRecord = (record: Record<string, any>): AssetUploadRecord | null => {
+  const name =
+    record.name ||
+    record.asset_name ||
+    record.assetName ||
+    record.asset ||
+    record.title ||
+    '';
+
+  const maybe = {
+    name: String(name || '').trim(),
+    assetClass:
+      String(
+        record.asset_class ||
+          record.assetClass ||
+          record.assetclass ||
+          record.type ||
+          defaultForm.assetClass
+      ).trim(),
+    country: String(record.country || defaultForm.country).trim(),
+    city: String(record.city || defaultForm.city).trim(),
+    address: String(record.address || record.location || defaultForm.address).trim(),
+    industry: String(record.industry || record.business || '').trim() || defaultForm.industry,
+    description: String(
+      record.description ||
+        record.summary ||
+        record.notes ||
+        defaultForm.description
+    ).trim(),
+    ownerObjective: String(
+      record.owner_objective ||
+        record.ownerObjective ||
+        record.objective ||
+        defaultForm.ownerObjective
+    ).trim(),
+    transactionType: String(
+      record.transaction_type ||
+        record.transactionType ||
+        record.transaction ||
+        defaultForm.transactionType
+    ).trim(),
+    operatingStatus: String(
+      record.operating_status ||
+        record.operatingStatus ||
+        record.status ||
+        defaultForm.operatingStatus
+    ).trim(),
+    askingPrice: String(
+      record.asking_price ??
+        record.askingPrice ??
+        record.price ??
+        defaultForm.askingPrice
+    ).trim(),
+  };
+
+  if (!maybe.name && !maybe.address && !maybe.country) {
+    return null;
+  }
+
+  return maybe;
+};
+
+const parseJsonAsset = (text: string): AssetUploadRecord | null => {
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return normalizeAssetRecord(parsed[0] || {});
+    }
+    if (parsed && typeof parsed === 'object') {
+      return normalizeAssetRecord(parsed as Record<string, any>);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const parseCsvAsset = (text: string): AssetUploadRecord | null => {
+  const rows = text
+    .trim()
+    .split(/\r?\n/)
+    .map((row) => row.trim())
+    .filter(Boolean);
+
+  if (rows.length < 2) return null;
+
+  const separator = rows[0].includes(';') ? ';' : ',';
+  const headers = rows[0].split(separator).map((h) => h.trim().toLowerCase());
+  const values = rows[1].split(separator).map((v) => v.trim());
+
+  const record: Record<string, string> = {};
+  headers.forEach((header, index) => {
+    record[header] = values[index] || '';
+  });
+
+  return normalizeAssetRecord(record);
+};
+
 export function AssetIntakeForm() {
   const [form, setForm] = useState(defaultForm);
   const [submitted, setSubmitted] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState('');
 
   const summary = useMemo(() => {
     return `${form.name} • ${form.assetClass} • ${form.country}`;
@@ -26,6 +127,31 @@ export function AssetIntakeForm() {
 
   const updateField = (field: keyof typeof defaultForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const jsonRecord = parseJsonAsset(text);
+      const csvRecord = jsonRecord ? null : parseCsvAsset(text);
+      const record = jsonRecord || csvRecord;
+
+      if (!record) {
+        setUploadStatus('This file is not in a supported format. Use JSON or CSV with asset fields.');
+        return;
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        ...record,
+      }));
+      setUploadStatus(`Loaded asset profile from ${file.name}.`);
+    } catch {
+      setUploadStatus('There was an error reading the uploaded file.');
+    }
   };
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -41,11 +167,27 @@ export function AssetIntakeForm() {
           <h2 className="text-2xl font-semibold text-white">Create a new asset mandate</h2>
         </div>
         <div className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs uppercase tracking-[0.12em] text-slate-300">
-          Manual Entry
+          Manual Entry + Upload
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="rounded-2xl border border-dashed border-brand-500/40 bg-brand-500/5 p-4">
+          <p className="mb-3 text-sm font-medium text-white">Upload existing asset file</p>
+          <input
+            type="file"
+            accept=".json,.csv,.txt"
+            onChange={handleFileUpload}
+            className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-brand-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
+          />
+          <p className="mt-2 text-xs text-slate-400">
+            Supports JSON and CSV. Uploaded records automatically fill the form.
+          </p>
+          {uploadStatus && (
+            <p className="mt-2 text-xs text-emerald-300">{uploadStatus}</p>
+          )}
+        </div>
+
         <div className="grid gap-5 md:grid-cols-2">
           <label className="space-y-2">
             <span className="text-sm text-slate-300">Asset name</span>
@@ -147,12 +289,6 @@ export function AssetIntakeForm() {
               className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none transition focus:border-brand-400"
             />
           </label>
-        </div>
-
-        <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/60 p-4">
-          <p className="mb-2 text-sm font-medium text-white">Document upload</p>
-          <input type="file" multiple className="block w-full text-sm text-slate-300" />
-          <p className="mt-2 text-xs text-slate-500">Supports: PDF, DOCX, XLSX, CSV, JPG, PNG</p>
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-800 pt-5 md:flex-row md:items-center md:justify-between">
