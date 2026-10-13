@@ -14,6 +14,9 @@ export type Asset = {
   transactionType: string;
   operatingStatus: string;
   askingPrice: number | null;
+  // The price as written when it is not a plain number, e.g. "EGP 30 million".
+  askingPriceText?: string | null;
+  industry?: string;
   status: string;
   createdAt: string;
 };

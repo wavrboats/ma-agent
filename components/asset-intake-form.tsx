@@ -1,18 +1,20 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
+// The form starts empty so a real intake never inherits sample values.
 const defaultForm = {
-  name: 'Amoun Leather Factory',
-  assetClass: 'Industrial Facility',
-  country: 'Egypt',
-  city: 'El Salheya',
-  address: 'Sharqia Industrial Zone',
-  industry: 'Leather Processing',
-  description: 'Former industrial leather factory requiring operational and legal verification before strategic exit planning.',
-  ownerObjective: 'Sell or restart under a strategic acquirer',
-  transactionType: 'Asset Sale',
-  operatingStatus: 'Closed',
+  name: '',
+  assetClass: '',
+  country: '',
+  city: '',
+  address: '',
+  industry: '',
+  description: '',
+  ownerObjective: '',
+  transactionType: '',
+  operatingStatus: '',
   askingPrice: '',
 };
 
@@ -156,13 +158,13 @@ const parseCsvAsset = (text: string): AssetUploadRecord | null => {
 
 export function AssetIntakeForm() {
   const [form, setForm] = useState(defaultForm);
-  const [submitted, setSubmitted] = useState(false);
+  const router = useRouter();
+  const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>(null);
   const [reading, setReading] = useState(false);
 
-  const summary = useMemo(() => {
-    return `${form.name} • ${form.assetClass} • ${form.country}`;
-  }, [form]);
+  const summary = useMemo(() => [form.name, form.assetClass, form.country].filter(Boolean).join(' • '), [form]);
 
   const updateField = (field: keyof typeof defaultForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -244,9 +246,33 @@ export function AssetIntakeForm() {
     }
   };
 
-  const handleSubmit = (event: React.FormEvent) => {
+  // Saves the asset, then opens the agents page on it so the pipeline can start.
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setSubmitted(true);
+    if (!form.name.trim()) {
+      setSubmitError('Give the asset a name.');
+      return;
+    }
+
+    setSaving(true);
+    setSubmitError('');
+    try {
+      const response = await fetch('/api/assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setSubmitError(data.error ?? 'The asset could not be saved.');
+        return;
+      }
+      router.push(`/agents?assetId=${encodeURIComponent(data.asset.assetId)}`);
+    } catch {
+      setSubmitError('The asset could not be saved. Check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -295,6 +321,8 @@ export function AssetIntakeForm() {
             <span className="text-sm text-slate-300">Asset name</span>
             <input
               value={form.name}
+              required
+              placeholder="e.g. Amoun Leather Factory"
               onChange={(e) => updateField('name', e.target.value)}
               className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none ring-0 transition focus:border-brand-400"
             />
@@ -395,20 +423,19 @@ export function AssetIntakeForm() {
 
         <div className="flex flex-col gap-3 border-t border-slate-800 pt-5 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-slate-400">{summary}</div>
-          <div className="flex items-center gap-3">
-            <button type="button" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200">
-              Save Draft
-            </button>
-            <button type="submit" className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-400">
-              Start Full Asset Analysis
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={saving || reading}
+            className="w-full rounded-xl bg-brand-500 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50 md:w-auto md:py-2"
+          >
+            {saving ? 'Saving…' : 'Save and run agents'}
+          </button>
         </div>
       </form>
 
-      {submitted && (
-        <div className="mt-6 rounded-2xl border border-emerald-700/50 bg-emerald-500/10 p-4 text-sm text-emerald-200">
-          Asset intake created successfully. The CEO AI Agent has initialized the workflow for {form.name}.
+      {submitError && (
+        <div role="alert" className="mt-6 rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+          {submitError}
         </div>
       )}
     </div>

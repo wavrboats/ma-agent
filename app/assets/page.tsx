@@ -1,33 +1,11 @@
 import Link from 'next/link';
+import { listAssets } from '@/lib/assets/store';
 
-const sampleAssets = [
-  {
-    id: 'AS-001',
-    name: 'Amoun Leather Factory',
-    assetClass: 'Industrial Facility',
-    country: 'Egypt',
-    status: 'INTAKE',
-    createdAt: '2026-10-11',
-  },
-  {
-    id: 'AS-002',
-    name: 'Nile Logistics Park',
-    assetClass: 'Logistics Real Estate',
-    country: 'Egypt',
-    status: 'DUE_DILIGENCE',
-    createdAt: '2026-10-07',
-  },
-  {
-    id: 'AS-003',
-    name: 'Delta Chemical Processing Plant',
-    assetClass: 'Manufacturing Asset',
-    country: 'Egypt',
-    status: 'VALUATION',
-    createdAt: '2026-10-04',
-  },
-];
+export const dynamic = 'force-dynamic';
 
-export default function AssetsPage() {
+export default async function AssetsPage() {
+  const assets = await listAssets();
+
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 md:px-8">
       <div className="mx-auto max-w-6xl">
@@ -41,7 +19,7 @@ export default function AssetsPage() {
           </Link>
         </header>
 
-        <div className="card overflow-hidden">
+        <div className="card overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-800 text-left">
             <thead className="bg-slate-900/80">
               <tr className="text-xs uppercase tracking-[0.14em] text-slate-400">
@@ -50,10 +28,11 @@ export default function AssetsPage() {
                 <th className="px-5 py-4">Location</th>
                 <th className="px-5 py-4">Status</th>
                 <th className="px-5 py-4">Created</th>
+                <th className="px-5 py-4">Agents</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {sampleAssets.map((asset) => (
+              {assets.map((asset) => (
                 <tr key={asset.id} className="bg-slate-950/40">
                   <td className="px-5 py-4">
                     <div>
@@ -71,6 +50,11 @@ export default function AssetsPage() {
                     </span>
                   </td>
                   <td className="px-5 py-4 text-slate-400">{asset.createdAt}</td>
+                  <td className="px-5 py-4">
+                    <Link href={`/agents?assetId=${encodeURIComponent(asset.assetId)}`} className="text-sm text-brand-300">
+                      Run agents
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>

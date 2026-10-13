@@ -113,6 +113,9 @@ create table if not exists public.reports (
 -- One asset ID runs through every stage. Unknown values stay null, never 0.
 
 alter table public.assets add column if not exists current_stage text not null default 'INTAKE';
+alter table public.assets add column if not exists industry text;
+-- The asking price as written when it is not a plain number, e.g. "EGP 30 million".
+alter table public.assets add column if not exists asking_price_text text;
 alter table public.tasks add column if not exists stage text;
 alter table public.approvals add column if not exists gate text;
 

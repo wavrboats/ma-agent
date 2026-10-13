@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
-import { mockAssets } from '@/lib/types';
+import { getAsset } from '@/lib/assets/store';
 import { getWorkflowForAsset, createCEOReport } from '@/lib/workflow';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(_: Request, { params }: { params: { id: string } }) {
-  const asset = mockAssets.find((item) => item.id === params.id || item.assetId === params.id);
+  const asset = await getAsset(params.id);
 
   if (!asset) {
     return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
