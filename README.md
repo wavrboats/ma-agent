@@ -17,6 +17,10 @@ This repository begins the first milestone of a full-stack investment platform d
 - Human approval checkpoints
 - Chairman decision support
 
+## Operating pipeline
+
+Every asset moves through 12 agent-run stages: Intake → Screen → Verify → Assess → Market → Model → Value → Strategy → Buyers → Materials → Outreach → Execute. Gates G0–G5 control progress between stages, and humans approve the legal, valuation, outreach and closing gates. See [`docs/pipeline.md`](docs/pipeline.md). The master map is at `/pipeline`.
+
 ## Architecture goals
 
 - Institutional-grade decision support

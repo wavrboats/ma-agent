@@ -1,3 +1,6 @@
+import Link from 'next/link';
+import { pipelineStages } from '@/lib/pipeline';
+
 const stats = [
   { label: 'Total Assets', value: '18', change: '+2 this month' },
   { label: 'Active Mandates', value: '07', change: '3 in diligence' },
@@ -29,20 +32,7 @@ const opportunities = [
   },
 ];
 
-const agents = [
-  'CEO AI Agent',
-  'Legal & Due Diligence',
-  'Industrial & Technical Assessment',
-  'Market Intelligence',
-  'Financial Analysis',
-  'Valuation',
-  'Strategy & Exit Planning',
-  'Buyer Intelligence',
-  'Deal Execution',
-  'Risk & Compliance',
-  'Document & Reporting',
-  'QA / Red Team',
-];
+const agents = pipelineStages.map((stage) => stage.agent);
 
 export function ChairmanDashboard() {
   return (
@@ -117,7 +107,12 @@ export function ChairmanDashboard() {
             </div>
 
             <div className="card p-5">
-              <h3 className="text-lg font-semibold text-white">AI Department Map</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-white">AI Agent Pipeline</h3>
+                <Link href="/pipeline" className="text-sm text-brand-300">
+                  Master map
+                </Link>
+              </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {agents.map((agent) => (
                   <span key={agent} className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-300">

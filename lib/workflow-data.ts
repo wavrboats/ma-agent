@@ -1,18 +1,4 @@
-export const workflowStages = [
-  'INTAKE',
-  'SCREENING',
-  'VERIFICATION',
-  'DUE_DILIGENCE',
-  'MARKET_RESEARCH',
-  'TECHNICAL_ASSESSMENT',
-  'FINANCIAL_MODEL',
-  'VALUATION',
-  'EXIT_STRATEGY',
-  'BUYER_INTELLIGENCE',
-  'DEAL_PREP',
-  'NEGOTIATION',
-  'CLOSING',
-];
+export { workflowStages } from '@/lib/types';
 
 export const departmentProgress = [
   { name: 'CEO AI Agent', status: 'RUNNING', progress: 82, owner: 'Chairman / CEO' },
