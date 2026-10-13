@@ -35,6 +35,7 @@ export const agentDefinitions: Partial<Record<StageCode, AgentDefinition>> = {
     webResearch: false,
     instructions: `Register the asset. Work only from the intake record below.
 - Record one finding per intake field that is filled in, citing intake://<asset ID>, with status UNVERIFIED (owner-provided).
+- documentDetails holds text copied from the owner's documents. Record each concrete fact in it (areas, floors, utilities, location claims) as its own finding, citing intake://<asset ID>, and note where its figures disagree with each other.
 - For every field that is blank or "Unknown", record a finding with value null and request the document or information that would fill it.
 - Request the core documents any later stage will need: proof of ownership, title deed, commercial register extract, latest financial statements, permits and licences, and site plans.
 - Do not research the asset online at this stage.`,

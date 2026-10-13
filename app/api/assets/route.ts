@@ -17,6 +17,7 @@ const FIELDS = [
   'transactionType',
   'operatingStatus',
   'askingPrice',
+  'documentDetails',
 ] as const;
 
 export async function GET() {

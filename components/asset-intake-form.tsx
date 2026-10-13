@@ -18,7 +18,11 @@ const defaultForm = {
   transactionType: '',
   operatingStatus: '',
   askingPrice: '',
+  // Free text copied from the asset's documents: the agents read it with the rest of the intake record.
+  documentDetails: '',
 };
+
+const MAX_DETAILS_CHARS = 50_000;
 
 type AssetUploadRecord = Partial<typeof defaultForm>;
 
@@ -322,8 +326,9 @@ export function AssetIntakeForm() {
         return;
       }
 
-      // A field the file does not state is cleared rather than left with older values.
-      const next = { ...defaultForm };
+      // A field the file does not state is cleared rather than left with older values. The pasted
+      // document details are the user's own text, so they are kept.
+      const next = { ...defaultForm, documentDetails: form.documentDetails };
       const missing: string[] = [];
       for (const [formField, extractedField, label] of extractedFieldMap) {
         const value = fields[extractedField];
@@ -606,6 +611,25 @@ export function AssetIntakeForm() {
               rows={3}
               className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none transition focus:border-brand-400"
             />
+          </label>
+
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-sm text-slate-300">Document details</span>
+            <span className="block text-xs text-slate-500">
+              Paste or type what the asset&apos;s documents say: brochures, title papers, floor areas, utilities. The agents read this
+              together with the fields above.
+            </span>
+            <textarea
+              value={form.documentDetails}
+              onChange={(e) => updateField('documentDetails', e.target.value)}
+              rows={10}
+              maxLength={MAX_DETAILS_CHARS}
+              placeholder="e.g. Total building area 906 m². Ground floor, mezzanine, 6 typical floors and a roof floor…"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none transition focus:border-brand-400"
+            />
+            <span className="block text-right text-[11px] text-slate-500">
+              {form.documentDetails.length.toLocaleString()} / {MAX_DETAILS_CHARS.toLocaleString()} characters
+            </span>
           </label>
         </div>
 

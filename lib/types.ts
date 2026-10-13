@@ -25,6 +25,8 @@ export type Asset = {
   // The price as written when it is not a plain number, e.g. "EGP 30 million".
   askingPriceText?: string | null;
   industry?: string;
+  // Free text copied from the asset's documents.
+  documentDetails?: string;
   attachments?: AssetAttachment[];
   status: string;
   createdAt: string;

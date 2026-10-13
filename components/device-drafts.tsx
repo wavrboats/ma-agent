@@ -59,6 +59,14 @@ export function DeviceDrafts() {
               </button>
             </div>
             {draft.fields.description && <p className="mt-3 text-sm text-slate-300">{draft.fields.description}</p>}
+            {draft.fields.documentDetails && (
+              <details className="mt-3 text-sm text-slate-300">
+                <summary className="cursor-pointer text-xs text-slate-400">
+                  Document details ({draft.fields.documentDetails.length.toLocaleString()} characters)
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap">{draft.fields.documentDetails}</p>
+              </details>
+            )}
             {draft.previews.length > 0 && (
               <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
                 {draft.previews.map((preview, index) => (
