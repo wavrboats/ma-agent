@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const asset = await createAsset({ ...input, name: input.name });
+    const asset = await createAsset({ ...input, name: input.name, attachments: body.attachments });
     return NextResponse.json({ asset, workflow: getWorkflowForAsset(asset.assetId) }, { status: 201 });
   } catch (error) {
     if (error instanceof StoreNotConfiguredError) return NextResponse.json({ error: error.message }, { status: 503 });
