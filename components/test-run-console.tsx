@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { PipelineGraph, RESULT_NODE } from '@/components/pipeline-graph';
+import type { GraphNodeId } from '@/components/pipeline-graph';
 import { listDeviceDrafts } from '@/lib/device-drafts';
 import type { DeviceDraft } from '@/lib/device-drafts';
 import { getGate, pipelineStages } from '@/lib/pipeline';
@@ -35,6 +37,7 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
   const [run, setRun] = useState<TestRunState | null>(null);
   const [decisions, setDecisions] = useState<Partial<Record<GateCode, GateDecision>>>({});
   const [approver, setApprover] = useState('');
+  const [selected, setSelected] = useState<GraphNodeId | null>(null);
 
   useEffect(() => {
     listDeviceDrafts()
@@ -101,31 +104,85 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
           </section>
         )}
 
-        <section className="card p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Stages</h2>
+        <section className="card p-4 sm:p-5">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white">Agents</h2>
             <Pill value={run.status} />
           </div>
-          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {pipelineStages.map((item) => (
-              <div
-                key={item.code}
-                className={`rounded-xl border p-3 text-xs ${item.code === run.currentStage ? 'border-brand-500/50 bg-brand-500/10' : 'border-slate-800 bg-slate-950/60'}`}
-              >
-                <p className="font-semibold text-white">
-                  {String(item.number).padStart(2, '0')} {item.code}
-                </p>
-                <p className="mt-1 text-slate-400">{item.agent}</p>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  <Pill value={run.stages[item.code]?.status ?? 'NOT RUN'} />
-                  {item.exitGate && run.gates[item.exitGate] && (
-                    <Pill value={`${item.exitGate} ${run.gates[item.exitGate]?.decision ?? 'open'}`} />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+          <p className="mb-3 text-xs text-slate-400">Tap a bubble to see what that agent produced.</p>
+          <PipelineGraph run={run} selected={selected} onSelect={setSelected} />
         </section>
+
+        {selected && (
+          <section className="card p-5">
+            {selected === RESULT_NODE ? (
+              <>
+                <h2 className="text-lg font-semibold text-white">Result</h2>
+                <p className="mt-2 text-sm text-slate-200">{run.outcome?.headline}</p>
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-300">
+                  {run.outcome?.points.map((point) => (
+                    <li key={point}>{point}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              (() => {
+                const info = pipelineStages.find((item) => item.code === selected)!;
+                const stageRun = run.stages[info.code];
+                const gate = info.exitGate ? run.gates[info.exitGate] : undefined;
+                const count = (list: { stage: string }[]) => list.filter((item) => item.stage === info.code).length;
+                return (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <h2 className="text-lg font-semibold text-white">
+                        {String(info.number).padStart(2, '0')} {info.agent}
+                      </h2>
+                      <Pill value={stageRun?.status ?? 'NOT RUN'} />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{info.title}</p>
+                    {stageRun?.summary ? (
+                      <p className="mt-3 text-sm text-slate-200">{stageRun.summary}</p>
+                    ) : (
+                      <p className="mt-3 text-sm text-slate-400">This agent has not run yet. Decide the open gate to move the task on.</p>
+                    )}
+                    {stageRun && (
+                      <p className="mt-3 text-xs text-slate-400">
+                        {count(run.findings)} findings · {count(run.risks)} risks · {count(run.missingDocuments)} missing documents
+                        {info.code === 'BUYERS' ? ` · ${run.buyers.length} buyers` : ''}
+                      </p>
+                    )}
+                    {gate && (
+                      <p className="mt-3 text-sm text-slate-300">
+                        Gate {info.exitGate}: recommends <Pill value={gate.recommendation ?? 'open'} />{' '}
+                        {gate.decision ? <Pill value={gate.decision} /> : <span className="text-amber-300">waiting for a decision</span>}
+                      </p>
+                    )}
+                    {run.outputs[info.code]?.map((block) => (
+                      <div key={block.title} className="mt-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <p className="text-sm font-medium text-white">{block.title}</p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">
+                          {block.items.map((entry, index) => (
+                            <li key={`${block.title}-${index}`}>{entry}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                    {info.code === 'BUYERS' && run.buyers.length > 0 && (
+                      <ul className="mt-3 space-y-1 text-sm text-slate-300">
+                        {run.buyers.map((buyer) => (
+                          <li key={buyer.id}>
+                            <span className="text-amber-300">{'★'.repeat(buyer.fit)}</span> {buyer.name}{' '}
+                            <span className="text-xs text-slate-500">({buyer.kind})</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                );
+              })()
+            )}
+          </section>
+        )}
 
         {pendingGate && (
           <section className="card border-amber-500/30 p-5">
