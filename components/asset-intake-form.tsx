@@ -208,7 +208,7 @@ export function AssetIntakeForm() {
   const [submitError, setSubmitError] = useState('');
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>(null);
   const [reading, setReading] = useState<string | null>(null);
-  const [savedOnDevice, setSavedOnDevice] = useState<string | null>(null);
+  const [savedOnDevice, setSavedOnDevice] = useState<{ id: string; name: string } | null>(null);
 
   const summary = useMemo(() => [form.name, form.assetClass, form.country].filter(Boolean).join(' • '), [form]);
 
@@ -377,8 +377,8 @@ export function AssetIntakeForm() {
     setSubmitError('');
     try {
       if (capabilities.assetStore === 'none') {
-        await saveDeviceDraft(form, attachments.map(({ name, type, blob }) => ({ name, type, blob })));
-        setSavedOnDevice(form.name);
+        const draft = await saveDeviceDraft(form, attachments.map(({ name, type, blob }) => ({ name, type, blob })));
+        setSavedOnDevice({ id: draft.id, name: form.name });
         setForm(defaultForm);
         freePreviews(attachments);
         setAttachments([]);
@@ -421,11 +421,18 @@ export function AssetIntakeForm() {
 
       {savedOnDevice && (
         <div role="status" className="mb-6 rounded-2xl border border-emerald-700/50 bg-emerald-500/10 p-4 text-sm text-emerald-200">
-          Saved {savedOnDevice} on this device.{' '}
-          <Link href="/assets" className="underline">
-            See it in the portfolio
-          </Link>
-          .
+          <p>Saved {savedOnDevice.name} on this device.</p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <Link
+              href={`/agents/test?draft=${encodeURIComponent(savedOnDevice.id)}`}
+              className="rounded-xl bg-brand-500 px-4 py-2 font-semibold text-white"
+            >
+              Test run agents
+            </Link>
+            <Link href="/assets" className="rounded-xl border border-emerald-700/50 px-4 py-2">
+              See it in the portfolio
+            </Link>
+          </div>
         </div>
       )}
 
@@ -455,7 +462,7 @@ export function AssetIntakeForm() {
           )}
           {onDevice && (
             <p className="mt-2 text-xs text-amber-300">
-              No database is connected yet, so assets are saved on this device only and the agents cannot run on them.
+              No database is connected yet, so assets are saved on this device only. You can try them with a rule-based test run; the real agents need the database and the Anthropic key.
             </p>
           )}
           {capabilities?.assetStore === 'local-file' && attachments.length > 0 && (
