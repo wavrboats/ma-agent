@@ -84,10 +84,13 @@ export function PipelineGraph({
   run,
   selected,
   onSelect,
+  onSettled,
 }: {
   run: TestRunState;
   selected: NodeId | null;
   onSelect: (id: NodeId) => void;
+  // Called when the animation has caught up with the run.
+  onSettled?: () => void;
 }) {
   const positions = useMemo(() => nodeIds.map((_, index) => position(index)), []);
   const height = positions[positions.length - 1].y + 90;
@@ -110,6 +113,12 @@ export function PipelineGraph({
     if (shown >= target) return;
     const timer = setTimeout(() => setShown((value) => value + 1), shown === 0 ? 300 : STEP_MS);
     return () => clearTimeout(timer);
+  }, [shown, target]);
+
+  useEffect(() => {
+    if (target > 0 && shown === target) onSettled?.();
+    // onSettled is a fresh callback each render; only progress should re-run this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, target]);
 
   const animating = shown < target && shown > 0;

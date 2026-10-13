@@ -6,6 +6,8 @@
 import { getGate, getStage, getWorkstreamGroup, pipelineStages } from '@/lib/pipeline';
 import type { GateCode, StageCode } from '@/lib/pipeline';
 import type { AgentFinding, AgentRisk, AgentRunState, GateRecommendation, MissingDocument } from '@/lib/agents/types';
+import { buildChecklists } from '@/lib/test-run-checklists';
+import type { Checklist, ChecklistInput } from '@/lib/test-run-checklists';
 
 type Fields = Record<string, string>;
 
@@ -27,6 +29,8 @@ export type TestRunState = AgentRunState & {
   buyers: BuyerLead[];
   outputs: Partial<Record<StageCode, StageOutput[]>>;
   outcome?: { headline: string; points: string[] };
+  // The workstreams behind each bubble and how far each got.
+  checklists: Partial<Record<StageCode, Checklist>>;
 };
 
 const FIELD_LABELS: [string, string][] = [
@@ -180,7 +184,14 @@ export function runTestPipeline(
     log: [{ at: now(), message: 'Test run started (rules only, no AI)' }],
     buyers: [],
     outputs: {},
+    checklists: {},
     updatedAt: now(),
+  };
+  const checklistInput: ChecklistInput = {
+    fields,
+    facts: factLines.map(({ line }) => line),
+    isTradeAsset: /factory|industrial|plant|production|machinery|manufactur/i.test(allText),
+    hasUnitMix: false,
   };
 
   const addFinding = (stage: StageCode, workstream: string, title: string, text: string, value: string | null, confidence: number) => {
@@ -312,7 +323,7 @@ export function runTestPipeline(
     screenRecommendation === 'APPROVE'
       ? 'The asset type fits the mandate and the owner material shows no disqualifying red flag.'
       : 'Hold until the asset type is clear and the possible red flags are explained.';
-  if (!passGate('G0', screenRecommendation, g0Rationale)) return finish(state);
+  if (!passGate('G0', screenRecommendation, g0Rationale)) return finish(state, checklistInput);
 
   // ---------- 03 VERIFY ----------
   const ddWorkstreams = getWorkstreamGroup('DUE_DILIGENCE').workstreams.slice(0, 6);
@@ -333,9 +344,12 @@ export function runTestPipeline(
     'No registry extract, title deed or ownership document has been provided, so who can sell the asset is unknown.',
     'Obtain the title deed and a registry search before relying on any other work.',
   );
-  complete('VERIFY', `${covered} of ${DD_CHECKS.length} legal workstreams are mentioned in the material, none verified. Ownership and title need registry documents.`);
+  complete(
+    'VERIFY',
+    `${covered === 0 ? 'None of the legal and ownership checks is covered by the material' : `${covered} of ${DD_CHECKS.length} legal checks are mentioned in the material, none verified`}. Ownership and title need registry documents.`,
+  );
   if (!passGate('G1', 'HOLD', 'Ownership, title and encumbrances cannot be confirmed from the owner material alone. Hold until the requested registry documents arrive.')) {
-    return finish(state);
+    return finish(state, checklistInput);
   }
 
   // ---------- 04 ASSESS ----------
@@ -385,7 +399,7 @@ export function runTestPipeline(
       : 'No financial figures were provided, so nothing can be modelled yet. Unknown is not zero: no figure has been assumed.',
   );
   if (!passGate('G2', 'HOLD', 'Commercial viability cannot be shown without income, cost and market figures. Hold until the rent roll and market data arrive.')) {
-    return finish(state);
+    return finish(state, checklistInput);
   }
 
   // ---------- 07 VALUE ----------
@@ -393,6 +407,7 @@ export function runTestPipeline(
   const unitSizes = proposal
     ? proposal.lines.flatMap((line) => Array.from(line.matchAll(/\b(\d{2,3})\b/g), (m) => Number(m[1]))).filter((size) => size >= 20 && size <= 400)
     : [];
+  checklistInput.hasUnitMix = unitSizes.length > 0;
   const valueItems: string[] = [];
   if (builtUp > 0) valueItems.push(`Built-up area: about ${fmt(builtUp)} m² (from the owner's floor areas, unverified).`);
   if (unitSizes.length > 0) {
@@ -413,7 +428,7 @@ export function runTestPipeline(
   requestDocument('VALUE', 'Land + machinery appraisal', 'Independent valuation by a licensed appraiser', 'A valuation must be signed off before G3', 'Licensed appraiser');
   complete('VALUE', 'Areas and the proposed unit mix are measured; no value can be given without price or rent data.');
   if (!passGate('G3', 'HOLD', 'There is no valuation to approve: price, rent and cost inputs are missing. Hold until an appraiser or the market data provides them.')) {
-    return finish(state);
+    return finish(state, checklistInput);
   }
 
   // ---------- 08 STRATEGY ----------
@@ -478,7 +493,7 @@ export function runTestPipeline(
     state.buyers.length > 0
       ? 'The shortlist is ready for review. Approving lets outreach be planned; nobody is contacted in a test run.'
       : 'No buyer types could be matched from the material.';
-  if (!passGate('G4', g4Recommendation, g4Rationale)) return finish(state);
+  if (!passGate('G4', g4Recommendation, g4Rationale)) return finish(state, checklistInput);
 
   // ---------- 10 MATERIALS ----------
   const highlights = [...demand.slice(0, 4), ...technical.slice(0, 6)]
@@ -523,15 +538,15 @@ export function runTestPipeline(
     'Handover',
   ]);
   complete('EXECUTE', 'Closing steps listed. No offers exist in a test run, so there are no terms to approve.');
-  if (!passGate('G5', 'HOLD', 'There are no binding terms to approve: no offers have been received.')) return finish(state);
+  if (!passGate('G5', 'HOLD', 'There are no binding terms to approve: no offers have been received.')) return finish(state, checklistInput);
 
   state.status = 'STOPPED';
   state.log.push({ at: now(), stage: 'EXECUTE', message: 'Test run complete' });
-  return finish(state);
+  return finish(state, checklistInput);
 }
 
 // Adds the end-of-run outcome summary.
-function finish(state: TestRunState): TestRunState {
+function finish(state: TestRunState, checklistInput: ChecklistInput): TestRunState {
   const highRisks = state.risks.filter((risk) => risk.severity === 'HIGH' || risk.severity === 'CRITICAL');
   const reached = pipelineStages.filter((stage) => state.stages[stage.code]?.status === 'COMPLETED').length;
   const typeNames = state.buyers.filter((buyer) => buyer.kind === 'Buyer type').slice(0, 3).map((buyer) => buyer.name);
@@ -550,6 +565,7 @@ function finish(state: TestRunState): TestRunState {
       'Value: unknown until price, rent or cost data is provided.',
     ],
   };
+  state.checklists = buildChecklists(state, checklistInput);
   state.updatedAt = new Date().toISOString();
   return state;
 }

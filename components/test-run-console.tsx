@@ -10,6 +10,16 @@ import { getGate, pipelineStages } from '@/lib/pipeline';
 import type { GateCode } from '@/lib/pipeline';
 import { runTestPipeline } from '@/lib/test-run';
 import type { GateDecision, TestRunState } from '@/lib/test-run';
+import type { ChecklistStatus } from '@/lib/test-run-checklists';
+
+// How each workstream status is shown: a symbol and a label as well as a colour.
+const CHECK_LOOK: Record<ChecklistStatus, { symbol: string; label: string; className: string }> = {
+  covered: { symbol: '✓', label: 'Covered by your material', className: 'bg-emerald-500/20 text-emerald-300' },
+  produced: { symbol: '◆', label: 'Produced by the run', className: 'bg-brand-500/25 text-brand-200' },
+  'needs-data': { symbol: '!', label: 'Needs data', className: 'bg-amber-500/20 text-amber-300' },
+  'not-applicable': { symbol: '–', label: 'Not relevant', className: 'bg-slate-700/60 text-slate-300' },
+  'not-reached': { symbol: '○', label: 'Not reached yet', className: 'bg-slate-800 text-slate-500' },
+};
 
 const tones: Record<string, string> = {
   COMPLETED: 'bg-emerald-500/10 text-emerald-300',
@@ -38,6 +48,9 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
   const [decisions, setDecisions] = useState<Partial<Record<GateCode, GateDecision>>>({});
   const [approver, setApprover] = useState('');
   const [selected, setSelected] = useState<GraphNodeId | null>(null);
+  const [autoRun, setAutoRun] = useState(true);
+  // True once the graph animation has caught up with the run, so an automatic decision lands after the dot arrives.
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     listDeviceDrafts()
@@ -48,6 +61,20 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
       })
       .catch(() => setDraft(null));
   }, [draftId]);
+
+  // Automatic run: once the dot has reached a gate that is waiting, approve it after a short pause.
+  useEffect(() => {
+    if (!autoRun || !settled || !run || !draft || run.status !== 'AWAITING_APPROVAL') return;
+    const gate = pipelineStages.find((item) => item.code === run.currentStage)?.exitGate;
+    if (!gate) return;
+    const timer = setTimeout(() => {
+      const next = { ...decisions, [gate]: { decision: 'APPROVED' as const, decidedBy: 'Automatic approval (test run)', decidedAt: new Date().toISOString() } };
+      setDecisions(next);
+      setSettled(false);
+      setRun(runTestPipeline(draft.id, draft.fields, draft.savedAt, next));
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [autoRun, settled, run, draft, decisions]);
 
   if (draft === undefined) return <p className="p-8 text-sm text-slate-400">Loading…</p>;
   if (!draft || !run) {
@@ -66,10 +93,11 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
   const pendingState = pendingGate ? run.gates[pendingGate.code] : undefined;
 
   // Each decision is kept and the whole test run is recomputed up to the next undecided gate.
-  const decide = (decision: 'APPROVED' | 'REJECTED') => {
-    if (!pendingGate || !approver.trim()) return;
-    const next = { ...decisions, [pendingGate.code]: { decision, decidedBy: `${approver.trim()} (test run)`, decidedAt: new Date().toISOString() } };
+  const decide = (decision: 'APPROVED' | 'REJECTED', decidedBy: string) => {
+    if (!pendingGate) return;
+    const next = { ...decisions, [pendingGate.code]: { decision, decidedBy, decidedAt: new Date().toISOString() } };
     setDecisions(next);
+    setSettled(false);
     setRun(runTestPipeline(draft.id, draft.fields, draft.savedAt, next));
   };
 
@@ -104,13 +132,71 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
           </section>
         )}
 
+        <section className="card flex flex-wrap items-center justify-between gap-3 p-4">
+          <div>
+            <p className="text-sm font-semibold text-white">Run automatically</p>
+            <p className="text-xs text-slate-400">
+              {autoRun ? 'Gates are approved after a short pause, so the task moves on by itself.' : 'The run stops at each gate until you approve it here.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoRun}
+            onClick={() => setAutoRun((value) => !value)}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition ${autoRun ? 'bg-emerald-600' : 'bg-slate-700'}`}
+          >
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${autoRun ? 'left-6' : 'left-1'}`} />
+            <span className="sr-only">Run automatically</span>
+          </button>
+        </section>
+
+        {!autoRun && pendingGate && (
+          <section className="card sticky top-2 z-10 border-amber-500/40 p-4 sm:p-5">
+            <h2 className="text-lg font-semibold text-white">
+              Decision needed: {pendingGate.code} {pendingGate.title}
+            </h2>
+            <p className="mt-1 text-sm text-slate-400">Approver: {pendingGate.approverRole}. {pendingGate.reason}</p>
+            {pendingState?.recommendation && (
+              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300">
+                <p className="mb-2">
+                  Recommendation: <Pill value={pendingState.recommendation} />
+                </p>
+                <p>{pendingState.rationale}</p>
+              </div>
+            )}
+            <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+              <input
+                value={approver}
+                onChange={(event) => setApprover(event.target.value)}
+                placeholder="Your name"
+                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
+              />
+              <button
+                disabled={!approver.trim()}
+                onClick={() => decide('APPROVED', `${approver.trim()} (test run)`)}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                Approve
+              </button>
+              <button
+                disabled={!approver.trim()}
+                onClick={() => decide('REJECTED', `${approver.trim()} (test run)`)}
+                className="rounded-xl border border-red-500/40 px-4 py-2 text-sm font-semibold text-red-200 disabled:opacity-40"
+              >
+                Reject
+              </button>
+            </div>
+          </section>
+        )}
+
         <section className="card p-4 sm:p-5">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white">Agents</h2>
             <Pill value={run.status} />
           </div>
           <p className="mb-3 text-xs text-slate-400">Tap a bubble to see what that agent produced.</p>
-          <PipelineGraph run={run} selected={selected} onSelect={setSelected} />
+          <PipelineGraph run={run} selected={selected} onSelect={setSelected} onSettled={() => setSettled(true)} />
         </section>
 
         {selected && (
@@ -157,6 +243,39 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
                         {gate.decision ? <Pill value={gate.decision} /> : <span className="text-amber-300">waiting for a decision</span>}
                       </p>
                     )}
+                    {run.checklists[info.code] && (
+                      <div className="mt-4">
+                        <p className="text-sm font-semibold text-white">{run.checklists[info.code]!.title}</p>
+                        <ol className="mt-2 space-y-1.5">
+                          {run.checklists[info.code]!.items.map((item) => {
+                            const look = CHECK_LOOK[item.status];
+                            const own = item.stage === info.code;
+                            return (
+                              <li
+                                key={item.number}
+                                className={`flex gap-2 rounded-lg border p-2 text-sm ${own ? 'border-slate-700 bg-slate-950/70' : 'border-slate-800/60 bg-slate-950/30 opacity-70'}`}
+                              >
+                                <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${look.className}`} aria-hidden>
+                                  {look.symbol}
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="text-slate-100">
+                                    {String(item.number).padStart(2, '0')} {item.name}
+                                  </span>
+                                  <span className="ml-2 text-[10px] uppercase tracking-[0.12em] text-slate-500">{look.label}</span>
+                                  {!own && (
+                                    <span className="ml-2 text-[10px] text-slate-500">
+                                      by {pipelineStages.find((stageInfo) => stageInfo.code === item.stage)?.agent}
+                                    </span>
+                                  )}
+                                  <span className="block text-xs text-slate-400">{item.note}</span>
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      </div>
+                    )}
                     {run.outputs[info.code]?.map((block) => (
                       <div key={block.title} className="mt-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
                         <p className="text-sm font-medium text-white">{block.title}</p>
@@ -181,45 +300,6 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
                 );
               })()
             )}
-          </section>
-        )}
-
-        {pendingGate && (
-          <section className="card border-amber-500/30 p-5">
-            <h2 className="text-lg font-semibold text-white">
-              Decision needed: {pendingGate.code} {pendingGate.title}
-            </h2>
-            <p className="mt-1 text-sm text-slate-400">Approver: {pendingGate.approverRole}. {pendingGate.reason}</p>
-            {pendingState?.recommendation && (
-              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300">
-                <p className="mb-2">
-                  Recommendation: <Pill value={pendingState.recommendation} />
-                </p>
-                <p>{pendingState.rationale}</p>
-              </div>
-            )}
-            <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-              <input
-                value={approver}
-                onChange={(event) => setApprover(event.target.value)}
-                placeholder="Your name"
-                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <button
-                disabled={!approver.trim()}
-                onClick={() => decide('APPROVED')}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-              >
-                Approve
-              </button>
-              <button
-                disabled={!approver.trim()}
-                onClick={() => decide('REJECTED')}
-                className="rounded-xl border border-red-500/40 px-4 py-2 text-sm font-semibold text-red-200 disabled:opacity-40"
-              >
-                Reject
-              </button>
-            </div>
           </section>
         )}
 
