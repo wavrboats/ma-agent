@@ -4,9 +4,6 @@ import { z } from 'zod';
 
 const MODEL = 'claude-opus-5-5';
 
-// Request bodies on Vercel functions are capped at 4.5 MB, so larger files never reach the route.
-export const MAX_PDF_BYTES = 4 * 1024 * 1024;
-
 export class ExtractionError extends Error {}
 
 // Each field is null when the document does not state it: unknown ≠ zero, and no guessing.

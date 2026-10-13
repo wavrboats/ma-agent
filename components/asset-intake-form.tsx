@@ -22,7 +22,7 @@ type AssetUploadRecord = Partial<typeof defaultForm>;
 
 type UploadStatus = { tone: 'info' | 'success' | 'error'; message: string } | null;
 
-const MAX_PDF_BYTES = 4 * 1024 * 1024;
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 
 // Matches the fields returned by /api/assets/extract. null means the document does not state it.
 type ExtractedFields = {
@@ -170,18 +170,51 @@ export function AssetIntakeForm() {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  // Large PDFs go straight from the browser to storage, because the hosting limit on request size
+  // (4.5 MB on Vercel) is far below 20 MB. The server then reads the stored copy with Claude.
+  const sendPdfForReading = async (file: File): Promise<Response> => {
+    const prepared = await fetch('/api/assets/uploads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ size: file.size }),
+    });
+    const upload = await prepared.json().catch(() => ({}));
+    if (!prepared.ok) return new Response(JSON.stringify(upload), { status: prepared.status });
+
+    if (upload.mode === 'storage') {
+      setUploadStatus({ tone: 'info', message: `Uploading ${file.name}…` });
+      const stored = await fetch(upload.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'false' },
+        body: file,
+      });
+      if (!stored.ok) {
+        return new Response(JSON.stringify({ error: 'The upload failed. Check your connection and try again.' }), { status: 502 });
+      }
+      setUploadStatus({ tone: 'info', message: `Reading ${file.name} with Claude. A long document can take a few minutes.` });
+      return fetch('/api/assets/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: upload.path }),
+      });
+    }
+
+    // Local development without Supabase: post the file itself.
+    const body = new FormData();
+    body.append('file', file);
+    return fetch('/api/assets/extract', { method: 'POST', body });
+  };
+
   const readPdf = async (file: File) => {
     if (file.size > MAX_PDF_BYTES) {
-      setUploadStatus({ tone: 'error', message: 'This PDF is larger than 4 MB. Upload a smaller or compressed copy.' });
+      setUploadStatus({ tone: 'error', message: 'This PDF is larger than 20 MB. Upload a smaller or compressed copy.' });
       return;
     }
 
     setReading(true);
-    setUploadStatus({ tone: 'info', message: `Reading ${file.name} with Claude. This can take up to a minute.` });
+    setUploadStatus({ tone: 'info', message: `Reading ${file.name} with Claude. A long document can take a few minutes.` });
     try {
-      const body = new FormData();
-      body.append('file', file);
-      const response = await fetch('/api/assets/extract', { method: 'POST', body });
+      const response = await sendPdfForReading(file);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         setUploadStatus({ tone: 'error', message: data.error ?? 'The PDF could not be read.' });
@@ -307,7 +340,7 @@ export function AssetIntakeForm() {
             />
           </label>
           <p className="mt-2 text-xs text-slate-400">
-            PDF (up to 4 MB), JSON or CSV. Claude reads PDFs and fills in the form; you check the result.
+            PDF (up to 20 MB), JSON or CSV. Claude reads PDFs and fills in the form; you check the result.
           </p>
           {uploadStatus && (
             <p role="status" className={`mt-2 text-xs ${statusStyles[uploadStatus.tone]}`}>
