@@ -1,3 +1,4 @@
+import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { FindingStatus, GateCode, StageCode } from '@/lib/pipeline';
 
 export type RunStatus = 'IDLE' | 'RUNNING' | 'AWAITING_APPROVAL' | 'STOPPED' | 'FAILED';
@@ -58,6 +59,13 @@ export type StageRun = {
   summary?: string;
   startedAt?: string;
   finishedAt?: string;
+  // The stage's conversation so far, so a stage can stop before a hosting time limit and resume
+  // on the next request.
+  messages?: BetaMessageParam[];
+  // Pages the agent searched or fetched in this stage; citations are checked against them.
+  seenUrls?: string[];
+  // Model requests made so far in this stage.
+  requests?: number;
 };
 
 export type LogEntry = {
@@ -77,5 +85,7 @@ export type AgentRunState = {
   gates: Partial<Record<GateCode, GateState>>;
   log: LogEntry[];
   error?: string;
+  // Set while a request is working on the run, until this time, so two requests never run the same step.
+  leaseUntil?: string;
   updatedAt: string;
 };
