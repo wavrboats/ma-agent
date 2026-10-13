@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DeviceDrafts } from '@/components/device-drafts';
 import { listAssets } from '@/lib/assets/store';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,8 @@ export default async function AssetsPage() {
             New Asset Intake
           </Link>
         </header>
+
+        <DeviceDrafts />
 
         <div className="card overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-800 text-left">

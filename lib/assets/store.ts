@@ -1,8 +1,9 @@
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import { assertWritableStore, getServerSupabase } from '@/lib/supabase-server';
+import { isUploadPath } from '@/lib/assets/uploads';
 import { mockAssets } from '@/lib/types';
-import type { Asset } from '@/lib/types';
+import type { Asset, AssetAttachment } from '@/lib/types';
 
 // Assets created through intake are saved in the Supabase `assets` table when it is configured, and in
 // .data/assets.json in local development. The built-in sample assets are always listed after them.
@@ -21,7 +22,24 @@ export type AssetInput = {
   transactionType?: string;
   operatingStatus?: string;
   askingPrice?: string;
+  attachments?: unknown;
 };
+
+const MAX_ATTACHMENTS = 20;
+
+// Keeps only attachments that point at uploads made through /api/assets/uploads.
+function cleanAttachments(value: unknown): AssetAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && isUploadPath(item.path))
+    .slice(0, MAX_ATTACHMENTS)
+    .map((item) => ({
+      path: item.path,
+      name: String(item.name ?? 'file').slice(0, 200),
+      contentType: String(item.contentType ?? ''),
+      size: Number(item.size) || 0,
+    }));
+}
 
 type AssetRow = {
   asset_id: string;
@@ -37,6 +55,7 @@ type AssetRow = {
   operating_status: string | null;
   asking_price: number | null;
   asking_price_text: string | null;
+  attachments: AssetAttachment[] | null;
   current_stage: string;
   created_at: string;
 };
@@ -56,6 +75,7 @@ const fromRow = (row: AssetRow): Asset => ({
   operatingStatus: row.operating_status ?? '',
   askingPrice: row.asking_price,
   askingPriceText: row.asking_price_text,
+  attachments: row.attachments ?? [],
   status: row.current_stage,
   createdAt: row.created_at.slice(0, 10),
 });
@@ -74,6 +94,7 @@ const toRow = (asset: Asset) => ({
   operating_status: asset.operatingStatus || null,
   asking_price: asset.askingPrice,
   asking_price_text: asset.askingPriceText ?? null,
+  attachments: asset.attachments ?? [],
   current_stage: asset.status,
 });
 
@@ -144,6 +165,8 @@ export async function createAsset(input: AssetInput): Promise<Asset> {
     transactionType: clean(input.transactionType),
     operatingStatus: clean(input.operatingStatus),
     ...parsePrice(input.askingPrice),
+    // Attachments live in Supabase Storage, so they are only kept when Supabase is configured.
+    attachments: getServerSupabase() ? cleanAttachments(input.attachments) : [],
     status: 'INTAKE',
     createdAt: new Date().toISOString().slice(0, 10),
   };

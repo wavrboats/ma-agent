@@ -1,18 +1,24 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
-import { ExtractionError, extractAssetFromPdf } from '@/lib/assets/extract';
+import { ExtractionError, IMAGE_TYPES, extractAssetFromFile } from '@/lib/assets/extract';
+import type { ReadableType } from '@/lib/assets/extract';
 import { MAX_UPLOAD_BYTES, UploadError, removeUploadedPdf, takeUploadedPdf } from '@/lib/assets/uploads';
 
 export const dynamic = 'force-dynamic';
 // A long PDF can take Claude a few minutes to read.
 export const maxDuration = 300;
 
-const isPdf = (file: File) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+const readableType = (file: File): ReadableType | null => {
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) return 'application/pdf';
+  return (IMAGE_TYPES as readonly string[]).includes(file.type) ? (file.type as ReadableType) : null;
+};
 
-// Reads a PDF with Claude and returns the asset intake fields it states. The PDF is either a
-// Supabase Storage upload ({ path }) or, in local development, the posted file itself.
+// Reads a PDF or photo with Claude and returns the asset intake fields it states. A large PDF arrives
+// as a Supabase Storage upload ({ path }); photos, which the browser shrinks first, and PDFs in local
+// development are posted directly.
 export async function POST(request: Request) {
-  let pdf: Buffer;
+  let data: Buffer;
+  let mediaType: ReadableType = 'application/pdf';
   let uploadPath: string | undefined;
 
   try {
@@ -20,17 +26,19 @@ export async function POST(request: Request) {
       const body = await request.json().catch(() => ({}));
       if (typeof body.path !== 'string') return NextResponse.json({ error: 'Missing upload path.' }, { status: 400 });
       uploadPath = body.path;
-      pdf = await takeUploadedPdf(body.path);
+      data = await takeUploadedPdf(body.path);
     } else {
       const form = await request.formData().catch(() => null);
       const file = form?.get('file');
-      if (!(file instanceof File)) return NextResponse.json({ error: 'Attach a PDF file.' }, { status: 400 });
-      if (!isPdf(file)) return NextResponse.json({ error: 'Only PDF files can be read here.' }, { status: 415 });
-      if (file.size > MAX_UPLOAD_BYTES) return NextResponse.json({ error: 'PDFs can be up to 20 MB.' }, { status: 413 });
-      pdf = Buffer.from(await file.arrayBuffer());
+      if (!(file instanceof File)) return NextResponse.json({ error: 'Attach a PDF or a photo.' }, { status: 400 });
+      const type = readableType(file);
+      if (!type) return NextResponse.json({ error: 'Only PDFs and JPEG, PNG, WebP or GIF photos can be read.' }, { status: 415 });
+      if (file.size > MAX_UPLOAD_BYTES) return NextResponse.json({ error: 'Files can be up to 20 MB.' }, { status: 413 });
+      mediaType = type;
+      data = Buffer.from(await file.arrayBuffer());
     }
 
-    const fields = await extractAssetFromPdf(pdf);
+    const fields = await extractAssetFromFile(data, mediaType);
     return NextResponse.json({ fields });
   } catch (error) {
     if (error instanceof UploadError) return NextResponse.json({ error: error.message }, { status: 400 });

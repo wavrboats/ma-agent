@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { saveDeviceDraft } from '@/lib/device-drafts';
 
 // The form starts empty so a real intake never inherits sample values.
 const defaultForm = {
@@ -22,7 +24,17 @@ type AssetUploadRecord = Partial<typeof defaultForm>;
 
 type UploadStatus = { tone: 'info' | 'success' | 'error'; message: string } | null;
 
-const MAX_PDF_BYTES = 20 * 1024 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENTS = 10;
+// Photos are shrunk in the browser to keep uploads quick on a phone connection.
+const MAX_PHOTO_SIDE = 2000;
+// Types Claude can read from a photo.
+const READABLE_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+// What this deployment can do; see /api/assets/capabilities.
+type Capabilities = { ai: boolean; assetStore: 'supabase' | 'local-file' | 'none'; attachments: boolean };
+
+type Attachment = { id: string; name: string; type: string; blob: Blob; previewUrl: string | null };
 
 // Matches the fields returned by /api/assets/extract. null means the document does not state it.
 type ExtractedFields = {
@@ -55,6 +67,33 @@ const extractedFieldMap: [keyof typeof defaultForm, keyof ExtractedFields, strin
 ];
 
 const isPdfFile = (file: File) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+const isPhotoFile = (file: File) => file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp|gif)$/i.test(file.name);
+
+// Re-encodes a photo as a JPEG no larger than MAX_PHOTO_SIDE. Returns null when the browser cannot
+// decode it (e.g. HEIC outside Safari); the original file is then kept as it is.
+async function shrinkPhoto(file: File): Promise<Blob | null> {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(image.naturalWidth * scale);
+    canvas.height = Math.round(image.naturalHeight * scale);
+    canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+const fileType = (name: string, type: string) =>
+  type || (/\.pdf$/i.test(name) ? 'application/pdf' : /\.heic$/i.test(name) ? 'image/heic' : /\.heif$/i.test(name) ? 'image/heif' : '');
+
+const formatSize = (bytes: number) => (bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`);
 
 const statusStyles = { info: 'text-slate-300', success: 'text-emerald-300', error: 'text-red-300' };
 
@@ -159,75 +198,131 @@ const parseCsvAsset = (text: string): AssetUploadRecord | null => {
 export function AssetIntakeForm() {
   const [form, setForm] = useState(defaultForm);
   const router = useRouter();
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>(null);
-  const [reading, setReading] = useState(false);
+  const [reading, setReading] = useState<string | null>(null);
+  const [savedOnDevice, setSavedOnDevice] = useState<string | null>(null);
 
   const summary = useMemo(() => [form.name, form.assetClass, form.country].filter(Boolean).join(' • '), [form]);
+
+  useEffect(() => {
+    fetch('/api/assets/capabilities', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then(setCapabilities)
+      // If the check fails, fall back to the mode that needs nothing from the server.
+      .catch(() => setCapabilities({ ai: false, assetStore: 'none', attachments: false }));
+  }, []);
+
+  // Preview images are freed when their attachment is removed or saved, and when the page closes.
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  useEffect(() => () => attachmentsRef.current.forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl)), []);
+  const freePreviews = (items: Attachment[]) => items.forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
 
   const updateField = (field: keyof typeof defaultForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Large PDFs go straight from the browser to storage, because the hosting limit on request size
-  // (4.5 MB on Vercel) is far below 20 MB. The server then reads the stored copy with Claude.
-  const sendPdfForReading = async (file: File): Promise<Response> => {
-    const prepared = await fetch('/api/assets/uploads', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ size: file.size }),
-    });
-    const upload = await prepared.json().catch(() => ({}));
-    if (!prepared.ok) return new Response(JSON.stringify(upload), { status: prepared.status });
+  const addAttachment = async (file: File): Promise<string | null> => {
+    if (isPhotoFile(file)) {
+      const shrunk = await shrinkPhoto(file);
+      if (!shrunk && file.size > MAX_FILE_BYTES) return `${file.name} is larger than 20 MB.`;
+      const blob = shrunk ?? file;
+      const name = shrunk ? file.name.replace(/\.[^.]+$/, '') + '.jpg' : file.name;
+      const type = shrunk ? 'image/jpeg' : fileType(file.name, file.type);
+      setAttachments((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), name, type, blob, previewUrl: shrunk ? URL.createObjectURL(shrunk) : null },
+      ]);
+      return null;
+    }
+    if (file.size > MAX_FILE_BYTES) return `${file.name} is larger than 20 MB.`;
+    setAttachments((prev) => [...prev, { id: crypto.randomUUID(), name: file.name, type: 'application/pdf', blob: file, previewUrl: null }]);
+    return null;
+  };
 
-    if (upload.mode === 'storage') {
-      setUploadStatus({ tone: 'info', message: `Uploading ${file.name}…` });
-      const stored = await fetch(upload.uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'false' },
-        body: file,
-      });
-      if (!stored.ok) {
-        return new Response(JSON.stringify({ error: 'The upload failed. Check your connection and try again.' }), { status: 502 });
+  const handleFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    // Reset so choosing the same file again still triggers a change.
+    event.target.value = '';
+    const problems: string[] = [];
+    let added = 0;
+
+    for (const file of files) {
+      if (isPdfFile(file) || isPhotoFile(file)) {
+        if (attachments.length + added >= MAX_ATTACHMENTS) {
+          problems.push(`Only ${MAX_ATTACHMENTS} files can be attached.`);
+          break;
+        }
+        const problem = await addAttachment(file);
+        if (problem) problems.push(problem);
+        else added += 1;
+        continue;
       }
-      setUploadStatus({ tone: 'info', message: `Reading ${file.name} with Claude. A long document can take a few minutes.` });
-      return fetch('/api/assets/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: upload.path }),
-      });
+
+      // JSON and CSV files fill the form instead of being attached.
+      const text = await file.text().catch(() => '');
+      const record = parseJsonAsset(text) || parseCsvAsset(text);
+      if (record) setForm((prev) => ({ ...prev, ...record }));
+      else problems.push(`${file.name} is not a photo, PDF, JSON or CSV file.`);
     }
 
-    // Local development without Supabase: post the file itself.
+    if (problems.length > 0) setUploadStatus({ tone: 'error', message: problems.join(' ') });
+    else if (added > 0) setUploadStatus({ tone: 'success', message: `Attached ${added} file${added > 1 ? 's' : ''}.` });
+  };
+
+  const removeAttachment = (id: string) => {
+    freePreviews(attachments.filter((item) => item.id === id));
+    setAttachments((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  // PDFs go through storage when it exists, because Vercel refuses requests over 4.5 MB. Photos are
+  // already shrunk, so they are posted directly.
+  const sendForReading = async (item: Attachment): Promise<Response> => {
+    if (item.type === 'application/pdf') {
+      const prepared = await fetch('/api/assets/uploads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'read', size: item.blob.size, contentType: 'application/pdf' }),
+      });
+      const upload = await prepared.json().catch(() => ({}));
+      if (!prepared.ok) return new Response(JSON.stringify(upload), { status: prepared.status });
+      if (upload.mode === 'storage') {
+        const stored = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'false' }, body: item.blob });
+        if (!stored.ok) return new Response(JSON.stringify({ error: 'The upload failed. Try again.' }), { status: 502 });
+        return fetch('/api/assets/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: upload.path }),
+        });
+      }
+    }
     const body = new FormData();
-    body.append('file', file);
+    body.append('file', new File([item.blob], item.name, { type: item.type }));
     return fetch('/api/assets/extract', { method: 'POST', body });
   };
 
-  const readPdf = async (file: File) => {
-    if (file.size > MAX_PDF_BYTES) {
-      setUploadStatus({ tone: 'error', message: 'This PDF is larger than 20 MB. Upload a smaller or compressed copy.' });
-      return;
-    }
-
-    setReading(true);
-    setUploadStatus({ tone: 'info', message: `Reading ${file.name} with Claude. A long document can take a few minutes.` });
+  const readWithClaude = async (item: Attachment) => {
+    setReading(item.id);
+    setUploadStatus({ tone: 'info', message: `Reading ${item.name} with Claude. A long document can take a few minutes.` });
     try {
-      const response = await sendPdfForReading(file);
+      const response = await sendForReading(item);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setUploadStatus({ tone: 'error', message: data.error ?? 'The PDF could not be read.' });
+        setUploadStatus({ tone: 'error', message: data.error ?? `${item.name} could not be read.` });
         return;
       }
 
       const fields = data.fields as ExtractedFields;
       if (!fields.is_asset_document) {
-        setUploadStatus({ tone: 'error', message: `${file.name} does not describe a specific asset, so the form was not changed.` });
+        setUploadStatus({ tone: 'error', message: `${item.name} does not describe a specific asset, so the form was not changed.` });
         return;
       }
 
-      // A field the document does not state is cleared rather than left with the sample values.
+      // A field the file does not state is cleared rather than left with older values.
       const next = { ...defaultForm };
       const missing: string[] = [];
       for (const [formField, extractedField, label] of extractedFieldMap) {
@@ -238,50 +333,36 @@ export function AssetIntakeForm() {
       setForm(next);
       setUploadStatus({
         tone: 'success',
-        message: `Filled the form from ${file.name}.${missing.length > 0 ? ` Not stated in the document: ${missing.join(', ')}.` : ''} Check every field before you continue.`,
+        message: `Filled the form from ${item.name}.${missing.length > 0 ? ` Not stated: ${missing.join(', ')}.` : ''} Check every field before you save.`,
       });
     } catch {
       setUploadStatus({ tone: 'error', message: 'The upload failed. Check your connection and try again.' });
     } finally {
-      setReading(false);
+      setReading(null);
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    // Reset so choosing the same file again still triggers a change.
-    event.target.value = '';
-    if (!file) return;
-
-    if (isPdfFile(file)) {
-      await readPdf(file);
-      return;
+  const uploadAttachments = async () => {
+    const saved = [];
+    for (const item of attachments) {
+      const prepared = await fetch('/api/assets/uploads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'attach', size: item.blob.size, contentType: item.type }),
+      });
+      const upload = await prepared.json().catch(() => ({}));
+      if (!prepared.ok || upload.mode !== 'storage') throw new Error(upload.error ?? `${item.name} could not be uploaded.`);
+      const stored = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': item.type, 'x-upsert': 'false' }, body: item.blob });
+      if (!stored.ok) throw new Error(`${item.name} could not be uploaded.`);
+      saved.push({ path: upload.path, name: item.name, contentType: item.type, size: item.blob.size });
     }
-
-    try {
-      const text = await file.text();
-      const jsonRecord = parseJsonAsset(text);
-      const csvRecord = jsonRecord ? null : parseCsvAsset(text);
-      const record = jsonRecord || csvRecord;
-
-      if (!record) {
-        setUploadStatus({ tone: 'error', message: 'This file is not in a supported format. Use a PDF, or JSON or CSV with asset fields.' });
-        return;
-      }
-
-      setForm((prev) => ({
-        ...prev,
-        ...record,
-      }));
-      setUploadStatus({ tone: 'success', message: `Loaded asset profile from ${file.name}.` });
-    } catch {
-      setUploadStatus({ tone: 'error', message: 'There was an error reading the uploaded file.' });
-    }
+    return saved;
   };
 
-  // Saves the asset, then opens the agents page on it so the pipeline can start.
+  // Saves the asset on the server and opens the agents on it, or, with no database, on this device.
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!capabilities) return;
     if (!form.name.trim()) {
       setSubmitError('Give the asset a name.');
       return;
@@ -290,10 +371,21 @@ export function AssetIntakeForm() {
     setSaving(true);
     setSubmitError('');
     try {
+      if (capabilities.assetStore === 'none') {
+        await saveDeviceDraft(form, attachments.map(({ name, type, blob }) => ({ name, type, blob })));
+        setSavedOnDevice(form.name);
+        setForm(defaultForm);
+        freePreviews(attachments);
+        setAttachments([]);
+        setUploadStatus(null);
+        return;
+      }
+
+      const savedAttachments = capabilities.attachments ? await uploadAttachments() : [];
       const response = await fetch('/api/assets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, attachments: savedAttachments }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -301,12 +393,14 @@ export function AssetIntakeForm() {
         return;
       }
       router.push(`/agents?assetId=${encodeURIComponent(data.asset.assetId)}`);
-    } catch {
-      setSubmitError('The asset could not be saved. Check your connection and try again.');
+    } catch (error) {
+      setSubmitError(error instanceof Error && error.message ? error.message : 'The asset could not be saved. Check your connection and try again.');
     } finally {
       setSaving(false);
     }
   };
+
+  const onDevice = capabilities?.assetStore === 'none';
 
   return (
     <div className="card p-6">
@@ -320,30 +414,91 @@ export function AssetIntakeForm() {
         </div>
       </div>
 
+      {savedOnDevice && (
+        <div role="status" className="mb-6 rounded-2xl border border-emerald-700/50 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+          Saved {savedOnDevice} on this device.{' '}
+          <Link href="/assets" className="underline">
+            See it in the portfolio
+          </Link>
+          .
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="rounded-2xl border border-dashed border-brand-500/40 bg-brand-500/5 p-4">
-          <p className="mb-3 text-sm font-medium text-white">Upload existing asset file</p>
+          <p className="mb-3 text-sm font-medium text-white">Photos and documents</p>
           {/* A label-wrapped input gives phones a large tap target. MIME types sit next to the extensions
               because iOS and Android pickers grey out files matched only by extension. */}
-          <label
-            className={`flex w-full cursor-pointer items-center justify-center rounded-xl bg-brand-500 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-400 ${
-              reading ? 'pointer-events-none opacity-50' : ''
-            }`}
-          >
-            {reading ? 'Reading document…' : 'Choose a file'}
+          <label className="flex w-full cursor-pointer items-center justify-center rounded-xl bg-brand-500 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-400">
+            Add photos or files
             <input
               type="file"
-              accept="application/pdf,.pdf,application/json,.json,text/csv,.csv,text/plain,.txt"
-              onChange={handleFileUpload}
-              disabled={reading}
+              multiple
+              accept="image/*,.heic,.heif,application/pdf,.pdf,application/json,.json,text/csv,.csv,text/plain,.txt"
+              onChange={handleFiles}
               className="sr-only"
             />
           </label>
           <p className="mt-2 text-xs text-slate-400">
-            PDF (up to 20 MB), JSON or CSV. Claude reads PDFs and fills in the form; you check the result.
+            Photos and PDFs (up to 20 MB each, {MAX_ATTACHMENTS} files) are kept with the asset. JSON or CSV fills in the form.
           </p>
+
+          {capabilities && !capabilities.ai && (
+            <p className="mt-2 text-xs text-slate-400">
+              Automatic reading is off until the Anthropic key is set up, so fill in the fields yourself.
+            </p>
+          )}
+          {onDevice && (
+            <p className="mt-2 text-xs text-amber-300">
+              No database is connected yet, so assets are saved on this device only and the agents cannot run on them.
+            </p>
+          )}
+          {capabilities?.assetStore === 'local-file' && attachments.length > 0 && (
+            <p className="mt-2 text-xs text-amber-300">Attachments are only kept when Supabase is set up.</p>
+          )}
+
+          {attachments.length > 0 && (
+            <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {attachments.map((item) => (
+                <li key={item.id} className="overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+                  {item.previewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={item.previewUrl} alt={item.name} className="h-28 w-full object-cover" />
+                  ) : (
+                    <div className="flex h-28 items-center justify-center text-xs font-semibold uppercase text-slate-400">
+                      {item.type === 'application/pdf' ? 'PDF' : 'Photo'}
+                    </div>
+                  )}
+                  <div className="space-y-2 p-2">
+                    <p className="truncate text-xs text-slate-200">{item.name}</p>
+                    <p className="text-[11px] text-slate-500">{formatSize(item.blob.size)}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {capabilities?.ai && (item.type === 'application/pdf' || READABLE_PHOTO_TYPES.includes(item.type)) && (
+                        <button
+                          type="button"
+                          disabled={reading !== null}
+                          onClick={() => readWithClaude(item)}
+                          className="rounded-lg bg-brand-500 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
+                        >
+                          {reading === item.id ? 'Reading…' : 'Read with Claude'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(item.id)}
+                        className="rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-300"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {uploadStatus && (
-            <p role="status" className={`mt-2 text-xs ${statusStyles[uploadStatus.tone]}`}>
+            <p role="status" className={`mt-3 text-xs ${statusStyles[uploadStatus.tone]}`}>
               {uploadStatus.message}
             </p>
           )}
@@ -458,10 +613,10 @@ export function AssetIntakeForm() {
           <div className="text-sm text-slate-400">{summary}</div>
           <button
             type="submit"
-            disabled={saving || reading}
+            disabled={!capabilities || saving || reading !== null}
             className="w-full rounded-xl bg-brand-500 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50 md:w-auto md:py-2"
           >
-            {saving ? 'Saving…' : 'Save and run agents'}
+            {!capabilities ? 'Checking…' : saving ? 'Saving…' : onDevice ? 'Save on this device' : 'Save and run agents'}
           </button>
         </div>
       </form>

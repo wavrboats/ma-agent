@@ -1,6 +1,14 @@
 import { pipelineStages } from '@/lib/pipeline';
 import type { ApproverRole, FindingStatus, GateCode, StageCode } from '@/lib/pipeline';
 
+// A photo or PDF kept with an asset, stored in the asset-files Supabase Storage bucket.
+export type AssetAttachment = {
+  path: string;
+  name: string;
+  contentType: string;
+  size: number;
+};
+
 export type Asset = {
   id: string;
   assetId: string;
@@ -17,6 +25,7 @@ export type Asset = {
   // The price as written when it is not a plain number, e.g. "EGP 30 million".
   askingPriceText?: string | null;
   industry?: string;
+  attachments?: AssetAttachment[];
   status: string;
   createdAt: string;
 };

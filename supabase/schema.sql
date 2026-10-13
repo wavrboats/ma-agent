@@ -116,6 +116,8 @@ alter table public.assets add column if not exists current_stage text not null d
 alter table public.assets add column if not exists industry text;
 -- The asking price as written when it is not a plain number, e.g. "EGP 30 million".
 alter table public.assets add column if not exists asking_price_text text;
+-- Photos and PDFs kept with the asset: [{ path, name, contentType, size }] in the asset-files bucket.
+alter table public.assets add column if not exists attachments jsonb not null default '[]'::jsonb;
 alter table public.tasks add column if not exists stage text;
 alter table public.approvals add column if not exists gate text;
 

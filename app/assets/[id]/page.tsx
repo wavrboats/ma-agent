@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getAsset } from '@/lib/assets/store';
+import { signAttachmentUrls } from '@/lib/assets/uploads';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,8 @@ const findings = [
 export default async function AssetWorkspacePage({ params }: { params: { id: string } }) {
   const asset = await getAsset(params.id);
   if (!asset) notFound();
+  const attachments = asset.attachments ?? [];
+  const urls = await signAttachmentUrls(attachments.map((item) => item.path));
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 md:px-8">
@@ -59,6 +62,29 @@ export default async function AssetWorkspacePage({ params }: { params: { id: str
             </Link>
           </div>
         </header>
+
+        {attachments.length > 0 && (
+          <section className="card mb-6 p-5">
+            <h2 className="mb-4 text-lg font-semibold text-white">Photos and documents ({attachments.length})</h2>
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {attachments.map((item) => (
+                <li key={item.path} className="overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+                  <a href={urls[item.path]} target="_blank" rel="noreferrer">
+                    {item.contentType === 'image/jpeg' || item.contentType === 'image/png' || item.contentType === 'image/webp' ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={urls[item.path]} alt={item.name} className="h-28 w-full object-cover" />
+                    ) : (
+                      <div className="flex h-28 items-center justify-center text-xs font-semibold uppercase text-slate-400">
+                        {item.contentType === 'application/pdf' ? 'PDF' : 'Photo'}
+                      </div>
+                    )}
+                    <p className="truncate p-2 text-xs text-slate-200">{item.name}</p>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <p className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
           The panels below are sample data. This asset's real findings, risks and gate decisions are on the{' '}
