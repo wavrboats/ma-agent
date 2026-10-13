@@ -1,32 +1,44 @@
 import { NextResponse } from 'next/server';
-import { mockAssets } from '@/lib/types';
+import { createAsset, listAssets } from '@/lib/assets/store';
+import { StoreNotConfiguredError } from '@/lib/supabase-server';
 import { getWorkflowForAsset } from '@/lib/workflow';
 
+export const dynamic = 'force-dynamic';
+
+const FIELDS = [
+  'name',
+  'assetClass',
+  'country',
+  'city',
+  'address',
+  'industry',
+  'description',
+  'ownerObjective',
+  'transactionType',
+  'operatingStatus',
+  'askingPrice',
+] as const;
+
 export async function GET() {
-  return NextResponse.json({ assets: mockAssets });
+  return NextResponse.json({ assets: await listAssets() });
 }
 
+// Saves an asset from the intake form. Every field is optional except the name.
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
+  const input = Object.fromEntries(
+    FIELDS.filter((field) => typeof body[field] === 'string').map((field) => [field, body[field] as string]),
+  );
 
-  const newAsset = {
-    id: `AS-${String(mockAssets.length + 1).padStart(3, '0')}`,
-    assetId: `AS-${String(mockAssets.length + 1).padStart(3, '0')}`,
-    name: body.name || 'New Asset',
-    assetClass: body.assetClass || 'Industrial Asset',
-    country: body.country || 'Unknown',
-    city: body.city || '',
-    address: body.address || '',
-    description: body.description || '',
-    ownerObjective: body.ownerObjective || '',
-    transactionType: body.transactionType || 'Asset Sale',
-    operatingStatus: body.operatingStatus || 'Unknown',
-    askingPrice: body.askingPrice ?? null,
-    status: 'INTAKE',
-    createdAt: new Date().toISOString().slice(0, 10),
-  };
+  if (!input.name?.trim()) {
+    return NextResponse.json({ error: 'Give the asset a name.' }, { status: 400 });
+  }
 
-  mockAssets.unshift(newAsset);
-
-  return NextResponse.json({ asset: newAsset, workflow: getWorkflowForAsset(newAsset.assetId) }, { status: 201 });
+  try {
+    const asset = await createAsset({ ...input, name: input.name });
+    return NextResponse.json({ asset, workflow: getWorkflowForAsset(asset.assetId) }, { status: 201 });
+  } catch (error) {
+    if (error instanceof StoreNotConfiguredError) return NextResponse.json({ error: error.message }, { status: 503 });
+    throw error;
+  }
 }

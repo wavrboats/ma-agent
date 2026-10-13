@@ -1,6 +1,10 @@
 import { AgentConsole } from '@/components/agent-console';
-import { mockAssets } from '@/lib/types';
+import { listAssets } from '@/lib/assets/store';
 
-export default function AgentsPage() {
-  return <AgentConsole assets={mockAssets.map(({ assetId, name }) => ({ assetId, name }))} />;
+export const dynamic = 'force-dynamic';
+
+export default async function AgentsPage({ searchParams }: { searchParams: { assetId?: string } }) {
+  const assets = (await listAssets()).map(({ assetId, name }) => ({ assetId, name }));
+  const initialAssetId = assets.some((asset) => asset.assetId === searchParams.assetId) ? searchParams.assetId : undefined;
+  return <AgentConsole assets={assets} initialAssetId={initialAssetId} />;
 }

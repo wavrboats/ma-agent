@@ -14,7 +14,7 @@ import { loadRun, newRunState, saveRun } from '@/lib/agents/store';
 import type { AgentRunState } from '@/lib/agents/types';
 import { getGate, getStage, nextStage, validateFinding } from '@/lib/pipeline';
 import type { GateCode, StageCode } from '@/lib/pipeline';
-import { mockAssets } from '@/lib/types';
+import { getAsset } from '@/lib/assets/store';
 
 const MODEL = 'claude-opus-5-5';
 const MAX_REQUESTS_PER_STAGE = 40;
@@ -186,9 +186,9 @@ function buildTools(state: AgentRunState, definition: AgentDefinition, seenUrls:
   return tools;
 }
 
-function buildTask(state: AgentRunState, definition: AgentDefinition) {
+async function buildTask(state: AgentRunState, definition: AgentDefinition) {
   const stage = getStage(definition.stage);
-  const asset = mockAssets.find((item) => item.assetId === state.assetId);
+  const asset = await getAsset(state.assetId);
   const earlierFindings = state.findings.map(
     ({ id, stage: findingStage, workstream, title, value, status, sourceUrl }) => ({
       id,
@@ -247,7 +247,7 @@ async function workOnStage(state: AgentRunState, definition: AgentDefinition, st
     stageRun = {
       status: 'RUNNING',
       startedAt: now(),
-      messages: [{ role: 'user', content: buildTask(state, definition) }],
+      messages: [{ role: 'user', content: await buildTask(state, definition) }],
       seenUrls: [],
       requests: 0,
     };
@@ -412,7 +412,7 @@ export async function runStep(assetId: string): Promise<AgentRunState> {
 
 // Starts a new run, or retries a failed stage. The agents then advance through runStep.
 export async function startRun(assetId: string, options: { reset?: boolean } = {}) {
-  if (!mockAssets.some((asset) => asset.assetId === assetId)) throw new PipelineError(`Unknown asset ${assetId}`);
+  if (!(await getAsset(assetId))) throw new PipelineError(`Unknown asset ${assetId}`);
 
   let state = await loadRun(assetId);
   if (state.status === 'RUNNING') throw new PipelineError('This asset already has a run in progress.');

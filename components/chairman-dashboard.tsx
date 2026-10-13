@@ -45,13 +45,19 @@ export function ChairmanDashboard() {
               ASSET-TO-EXIT AI OPERATING SYSTEM
             </h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200">
               English / العربية
             </button>
-            <button className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-brand-400">
+            <Link href="/agents" className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200">
+              Agents
+            </Link>
+            <Link
+              href="/assets/new"
+              className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-brand-400"
+            >
               New Asset Intake
-            </button>
+            </Link>
           </div>
         </header>
 
@@ -71,7 +77,9 @@ export function ChairmanDashboard() {
           <section className="card p-5">
             <div className="mb-5 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-white">Asset Portfolio</h2>
-              <button className="text-sm text-brand-300">View all</button>
+              <Link href="/assets" className="text-sm text-brand-300">
+                View all
+              </Link>
             </div>
 
             <div className="space-y-4">
@@ -89,7 +97,9 @@ export function ChairmanDashboard() {
                   </div>
                   <div className="mt-4 flex flex-col gap-2 text-xs text-slate-400 md:flex-row md:items-center md:justify-between">
                     <span>Owners: {opportunity.owners}</span>
-                    <button className="text-brand-300">Open workspace</button>
+                    <Link href="/assets" className="text-brand-300">
+                      Open portfolio
+                    </Link>
                   </div>
                 </div>
               ))}

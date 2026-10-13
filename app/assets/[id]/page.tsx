@@ -1,4 +1,8 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { getAsset } from '@/lib/assets/store';
+
+export const dynamic = 'force-dynamic';
 
 const tasks = [
   { department: 'CEO AI Agent', title: 'Create asset profile and execution plan', status: 'RUNNING', owner: 'CEO', confidence: 0.82, blockers: ['Awaiting legal record request'] },
@@ -27,25 +31,42 @@ const findings = [
   },
 ];
 
-export default function AssetWorkspacePage({ params }: { params: { id: string } }) {
+export default async function AssetWorkspacePage({ params }: { params: { id: string } }) {
+  const asset = await getAsset(params.id);
+  if (!asset) notFound();
+
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 md:px-8">
       <div className="mx-auto max-w-7xl">
         <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="badge mb-3">Asset Workspace</div>
-            <h1 className="text-3xl font-semibold text-white">Amoun Leather Factory</h1>
-            <p className="mt-2 text-sm text-slate-400">Asset ID: {params.id}</p>
+            <h1 className="text-3xl font-semibold text-white">{asset.name}</h1>
+            <p className="mt-2 text-sm text-slate-400">
+              Asset ID: {asset.assetId}
+              {asset.city || asset.country ? ` · ${[asset.city, asset.country].filter(Boolean).join(', ')}` : ''}
+            </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <Link href="/assets" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200">
               Portfolio
             </Link>
-            <button className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-400">
-              Request Chairman Approval
-            </button>
+            <Link
+              href={`/agents?assetId=${encodeURIComponent(asset.assetId)}`}
+              className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-400"
+            >
+              Run agents
+            </Link>
           </div>
         </header>
+
+        <p className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+          The panels below are sample data. This asset's real findings, risks and gate decisions are on the{' '}
+          <Link href={`/agents?assetId=${encodeURIComponent(asset.assetId)}`} className="underline">
+            agents page
+          </Link>
+          .
+        </p>
 
         <div className="mb-8 grid gap-4 md:grid-cols-4">
           {[

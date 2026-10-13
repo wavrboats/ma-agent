@@ -21,7 +21,9 @@ This repository begins the first milestone of a full-stack investment platform d
 
 Every asset moves through 12 agent-run stages: Intake → Screen → Verify → Assess → Market → Model → Value → Strategy → Buyers → Materials → Outreach → Execute. Gates G0–G5 control progress between stages, and humans approve the legal, valuation, outreach and closing gates. See [`docs/pipeline.md`](docs/pipeline.md). The master map is at `/pipeline`.
 
-The Intake, Screening and DD agents run on Claude. Set `ANTHROPIC_API_KEY` in `.env.local`, then open `/agents` to run them on an asset and decide the gates. On Vercel they also need Supabase. See [Running the agents](docs/pipeline.md#running-the-agents).
+The Intake, Screening and DD agents run on Claude. Set `ANTHROPIC_API_KEY` in `.env.local`, then open `/agents` to run them on an asset and decide the gates. On Vercel they also need Supabase.
+
+New Asset Intake (`/assets/new`) saves an asset and opens the agents on it. The form can read a PDF (up to 4 MB): Claude fills in the intake fields from it, and you check them. JSON and CSV files still fill the form directly. Saved assets are stored in the Supabase `assets` table, or in `.data/assets.json` locally; on Vercel, saving assets needs Supabase. See [Running the agents](docs/pipeline.md#running-the-agents).
 
 ## Architecture goals
 

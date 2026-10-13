@@ -35,8 +35,8 @@ function Pill({ value }: { value: string }) {
   );
 }
 
-export function AgentConsole({ assets }: { assets: AssetOption[] }) {
-  const [assetId, setAssetId] = useState(assets[0]?.assetId ?? 'AS-001');
+export function AgentConsole({ assets, initialAssetId }: { assets: AssetOption[]; initialAssetId?: string }) {
+  const [assetId, setAssetId] = useState(initialAssetId ?? assets[0]?.assetId ?? 'AS-001');
   const [run, setRun] = useState<RunView | null>(null);
   const [stepping, setStepping] = useState(false);
   const currentAsset = useRef(assetId);
