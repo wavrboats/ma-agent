@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { PipelineGraph, RESULT_NODE } from '@/components/pipeline-graph';
+import { WorkstreamBubbles } from '@/components/workstream-bubbles';
 import type { GraphNodeId } from '@/components/pipeline-graph';
 import { listDeviceDrafts } from '@/lib/device-drafts';
 import type { DeviceDraft } from '@/lib/device-drafts';
@@ -10,16 +11,6 @@ import { getGate, pipelineStages } from '@/lib/pipeline';
 import type { GateCode } from '@/lib/pipeline';
 import { runTestPipeline } from '@/lib/test-run';
 import type { GateDecision, TestRunState } from '@/lib/test-run';
-import type { ChecklistStatus } from '@/lib/test-run-checklists';
-
-// How each workstream status is shown: a symbol and a label as well as a colour.
-const CHECK_LOOK: Record<ChecklistStatus, { symbol: string; label: string; className: string }> = {
-  covered: { symbol: '✓', label: 'Covered by your material', className: 'bg-emerald-500/20 text-emerald-300' },
-  produced: { symbol: '◆', label: 'Produced by the run', className: 'bg-brand-500/25 text-brand-200' },
-  'needs-data': { symbol: '!', label: 'Needs data', className: 'bg-amber-500/20 text-amber-300' },
-  'not-applicable': { symbol: '–', label: 'Not relevant', className: 'bg-slate-700/60 text-slate-300' },
-  'not-reached': { symbol: '○', label: 'Not reached yet', className: 'bg-slate-800 text-slate-500' },
-};
 
 const tones: Record<string, string> = {
   COMPLETED: 'bg-emerald-500/10 text-emerald-300',
@@ -244,37 +235,12 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
                       </p>
                     )}
                     {run.checklists[info.code] && (
-                      <div className="mt-4">
-                        <p className="text-sm font-semibold text-white">{run.checklists[info.code]!.title}</p>
-                        <ol className="mt-2 space-y-1.5">
-                          {run.checklists[info.code]!.items.map((item) => {
-                            const look = CHECK_LOOK[item.status];
-                            const own = item.stage === info.code;
-                            return (
-                              <li
-                                key={item.number}
-                                className={`flex gap-2 rounded-lg border p-2 text-sm ${own ? 'border-slate-700 bg-slate-950/70' : 'border-slate-800/60 bg-slate-950/30 opacity-70'}`}
-                              >
-                                <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${look.className}`} aria-hidden>
-                                  {look.symbol}
-                                </span>
-                                <span className="min-w-0">
-                                  <span className="text-slate-100">
-                                    {String(item.number).padStart(2, '0')} {item.name}
-                                  </span>
-                                  <span className="ml-2 text-[10px] uppercase tracking-[0.12em] text-slate-500">{look.label}</span>
-                                  {!own && (
-                                    <span className="ml-2 text-[10px] text-slate-500">
-                                      by {pipelineStages.find((stageInfo) => stageInfo.code === item.stage)?.agent}
-                                    </span>
-                                  )}
-                                  <span className="block text-xs text-slate-400">{item.note}</span>
-                                </span>
-                              </li>
-                            );
-                          })}
-                        </ol>
-                      </div>
+                      <WorkstreamBubbles
+                        key={info.code}
+                        title={run.checklists[info.code]!.title}
+                        items={run.checklists[info.code]!.items}
+                        ownStage={info.code}
+                      />
                     )}
                     {run.outputs[info.code]?.map((block) => (
                       <div key={block.title} className="mt-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">

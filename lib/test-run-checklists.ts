@@ -201,7 +201,8 @@ export function buildChecklists(state: AgentRunState, input: ChecklistInput): Pa
         const base = { number: index + 1, name, stage: rule.stage };
         if (!ran(rule.stage)) return { ...base, status: 'not-reached' as const, note: `Waiting for the ${pipelineStages.find((s) => s.code === rule.stage)?.agent}` };
         if (rule.tradeOnly && !input.isTradeAsset) return { ...base, status: 'not-applicable' as const, note: 'Applies to factories and traded goods' };
-        const evidence = rule.evidence ? input.facts.find((line) => rule.evidence!.test(line)) : undefined;
+        // A line that says something is missing is not evidence for it.
+        const evidence = rule.evidence ? input.facts.find((line) => rule.evidence!.test(line) && !/not stated|not provided|unknown/i.test(line)) : undefined;
         if (evidence) return { ...base, status: 'covered' as const, note: evidence.length > 90 ? `${evidence.slice(0, 87)}…` : evidence };
         if (rule.produced && !(rule.stage === 'VALUE' && index === 5 && !input.hasUnitMix)) {
           return { ...base, status: 'produced' as const, note: rule.produced };
