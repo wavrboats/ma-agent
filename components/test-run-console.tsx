@@ -4,9 +4,10 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { listDeviceDrafts } from '@/lib/device-drafts';
 import type { DeviceDraft } from '@/lib/device-drafts';
-import type { AgentRunState } from '@/lib/agents/types';
 import { getGate, pipelineStages } from '@/lib/pipeline';
+import type { GateCode } from '@/lib/pipeline';
 import { runTestPipeline } from '@/lib/test-run';
+import type { GateDecision, TestRunState } from '@/lib/test-run';
 
 const tones: Record<string, string> = {
   COMPLETED: 'bg-emerald-500/10 text-emerald-300',
@@ -31,7 +32,8 @@ function Pill({ value }: { value: string }) {
 // Runs the rule-based test pipeline on an asset saved on this device and shows the result.
 export function TestRunConsole({ draftId }: { draftId: string }) {
   const [draft, setDraft] = useState<DeviceDraft | null | undefined>(undefined);
-  const [run, setRun] = useState<AgentRunState | null>(null);
+  const [run, setRun] = useState<TestRunState | null>(null);
+  const [decisions, setDecisions] = useState<Partial<Record<GateCode, GateDecision>>>({});
   const [approver, setApprover] = useState('');
 
   useEffect(() => {
@@ -60,26 +62,12 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
   const pendingGate = run.status === 'AWAITING_APPROVAL' && stage.exitGate ? getGate(stage.exitGate) : undefined;
   const pendingState = pendingGate ? run.gates[pendingGate.code] : undefined;
 
+  // Each decision is kept and the whole test run is recomputed up to the next undecided gate.
   const decide = (decision: 'APPROVED' | 'REJECTED') => {
     if (!pendingGate || !approver.trim()) return;
-    const decidedBy = `${approver.trim()} (test run)`;
-    if (pendingGate.code === 'G0') {
-      setRun(runTestPipeline(draft.id, draft.fields, draft.savedAt, { decision, decidedBy }));
-      return;
-    }
-    const now = new Date().toISOString();
-    const approved = decision === 'APPROVED';
-    setRun({
-      ...run,
-      status: 'STOPPED',
-      currentStage: approved ? 'ASSESS' : run.currentStage,
-      gates: { ...run.gates, [pendingGate.code]: { ...pendingState, decision, decidedBy, decidedAt: now } },
-      log: [
-        ...run.log,
-        { at: now, stage: run.currentStage, message: `${pendingGate.code} ${pendingGate.title}: ${decision.toLowerCase()} by ${decidedBy}` },
-        ...(approved ? [{ at: now, stage: 'ASSESS' as const, message: 'Stopped: the Engineering Agent has not been built yet' }] : []),
-      ],
-    });
+    const next = { ...decisions, [pendingGate.code]: { decision, decidedBy: `${approver.trim()} (test run)`, decidedAt: new Date().toISOString() } };
+    setDecisions(next);
+    setRun(runTestPipeline(draft.id, draft.fields, draft.savedAt, next));
   };
 
   return (
@@ -89,7 +77,7 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
           <div>
             <div className="badge mb-3">Test run</div>
             <h1 className="text-3xl font-semibold tracking-tight text-white">{draft.fields.name || 'Untitled asset'}</h1>
-            <p className="mt-2 text-sm text-slate-400">Intake → Screening → Due diligence</p>
+            <p className="mt-2 text-sm text-slate-400">All 12 stages, from intake to closing</p>
           </div>
           <Link href="/assets" className="self-start rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200">
             Portfolio
@@ -101,13 +89,25 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
           research, and leaves every finding unverified. Add the Anthropic key and Supabase to run the real agents.
         </p>
 
+        {run.outcome && (
+          <section className="card border-brand-500/40 p-5">
+            <h2 className="text-lg font-semibold text-white">Outcome</h2>
+            <p className="mt-2 text-sm text-slate-200">{run.outcome.headline}</p>
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-300">
+              {run.outcome.points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <section className="card p-5">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white">Stages</h2>
             <Pill value={run.status} />
           </div>
           <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {pipelineStages.slice(0, 6).map((item) => (
+            {pipelineStages.map((item) => (
               <div
                 key={item.code}
                 className={`rounded-xl border p-3 text-xs ${item.code === run.currentStage ? 'border-brand-500/50 bg-brand-500/10' : 'border-slate-800 bg-slate-950/60'}`}
@@ -179,6 +179,59 @@ export function TestRunConsole({ draftId }: { draftId: string }) {
               ))}
           </div>
         </section>
+
+        {run.buyers.length > 0 && (
+          <section className="card p-5">
+            <h2 className="text-lg font-semibold text-white">Potential buyers ({run.buyers.length})</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              Buyer types are ranked from the facts you gave. Named leads are only names that appear in your material; none were
+              researched or contacted.
+            </p>
+            <div className="mt-4 space-y-3">
+              {run.buyers.map((buyer) => (
+                <div key={buyer.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-medium text-white">
+                      <span className="mr-2 text-slate-500">{buyer.id}</span>
+                      {buyer.name}
+                    </p>
+                    <span className="shrink-0 text-xs text-amber-300">{'★'.repeat(buyer.fit)}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.12em] text-slate-500">{buyer.kind}</p>
+                  <p className="mt-2 text-slate-300">{buyer.rationale}</p>
+                  <p className="mt-1 text-xs text-slate-400">Approach: {buyer.approach}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {pipelineStages.some((item) => run.outputs[item.code]) && (
+          <section className="card p-5">
+            <h2 className="mb-4 text-lg font-semibold text-white">Stage outputs</h2>
+            <div className="space-y-5">
+              {pipelineStages
+                .filter((item) => run.outputs[item.code])
+                .map((item) => (
+                  <div key={item.code}>
+                    <p className="text-sm font-semibold text-brand-200">
+                      {String(item.number).padStart(2, '0')} {item.code} · {item.agent}
+                    </p>
+                    {run.outputs[item.code]!.map((block) => (
+                      <div key={block.title} className="mt-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <p className="text-sm font-medium text-white">{block.title}</p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">
+                          {block.items.map((entry, index) => (
+                            <li key={`${block.title}-${index}`}>{entry}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+            </div>
+          </section>
+        )}
 
         <div className="grid gap-6 xl:grid-cols-2">
           <section className="card p-5">
