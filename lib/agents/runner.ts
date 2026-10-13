@@ -1,6 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod';
-import type { BetaMessage, BetaToolUnion } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type {
+  BetaContentBlockParam,
+  BetaMessage,
+  BetaToolResultBlockParam,
+  BetaToolUnion,
+} from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type { BetaRunnableTool } from '@anthropic-ai/sdk/lib/tools/BetaRunnableTool';
 import { z } from 'zod';
 import { SYSTEM_PROMPT, agentDefinitions } from '@/lib/agents/definitions';
 import type { AgentDefinition } from '@/lib/agents/definitions';
@@ -11,7 +17,14 @@ import type { GateCode, StageCode } from '@/lib/pipeline';
 import { mockAssets } from '@/lib/types';
 
 const MODEL = 'claude-opus-5-5';
-const MAX_ITERATIONS = 40;
+const MAX_REQUESTS_PER_STAGE = 40;
+
+// Vercel stops a function at its maxDuration (300 s here, the most every plan allows). A step stops
+// starting new model calls after STEP_BUDGET_MS and aborts any call still running at
+// STEP_DEADLINE_MS, then saves, so the next step resumes the stage from its saved conversation.
+const STEP_BUDGET_MS = 200_000;
+const STEP_DEADLINE_MS = 280_000;
+const LEASE_MS = 300_000;
 
 let client: Anthropic | undefined;
 const getClient = () => (client ??= new Anthropic());
@@ -92,7 +105,6 @@ function buildTools(state: AgentRunState, definition: AgentDefinition, seenUrls:
         sourceSeen,
       };
       state.findings.push(finding);
-      await saveRun(state);
 
       return status === input.status
         ? `Recorded ${finding.id}.`
@@ -117,7 +129,6 @@ function buildTools(state: AgentRunState, definition: AgentDefinition, seenUrls:
     run: async (input) => {
       const risk = { id: newId('R', state.risks.length), stage: stage.code, ...input };
       state.risks.push(risk);
-      await saveRun(state);
       return `Recorded ${risk.id}.`;
     },
   });
@@ -141,7 +152,6 @@ function buildTools(state: AgentRunState, definition: AgentDefinition, seenUrls:
         likelyHolder: input.likely_holder,
       };
       state.missingDocuments.push(doc);
-      await saveRun(state);
       return `Added ${doc.id} to the missing-documents list.`;
     },
   });
@@ -160,8 +170,7 @@ function buildTools(state: AgentRunState, definition: AgentDefinition, seenUrls:
         }),
         run: async (input) => {
           state.gates[gate.code] = { ...state.gates[gate.code], ...input };
-          await saveRun(state);
-          return `Recommendation on ${gate.code} recorded.`;
+              return `Recommendation on ${gate.code} recorded.`;
         },
       }),
     );
@@ -212,118 +221,196 @@ Your task:
 ${definition.instructions}`;
 }
 
-async function runStage(state: AgentRunState, definition: AgentDefinition) {
+const isRunnable = (tool: BetaToolUnion): tool is BetaRunnableTool =>
+  typeof (tool as Partial<BetaRunnableTool>).run === 'function';
+
+const errorMessage = (error: unknown) =>
+  error instanceof Anthropic.APIError ? `Claude API error ${error.status}: ${error.message}` : String(error instanceof Error ? error.message : error);
+
+async function runTool(tool: BetaRunnableTool | undefined, block: { id: string; name: string; input: unknown }) {
+  const result: BetaToolResultBlockParam = { type: 'tool_result', tool_use_id: block.id, content: '' };
+  if (!tool) return { ...result, is_error: true, content: `Unknown tool ${block.name}.` };
+  try {
+    return { ...result, content: await tool.run(tool.parse(block.input)) };
+  } catch (error) {
+    return { ...result, is_error: true, content: `Invalid input: ${errorMessage(error)}` };
+  }
+}
+
+// Works on the current stage until it finishes or the step's time budget runs out.
+// Returns true when the stage is complete, false when it paused and needs another step.
+async function workOnStage(state: AgentRunState, definition: AgentDefinition, stepStart: number): Promise<boolean> {
   const stage = getStage(definition.stage);
-  const seenUrls = new Set<string>();
 
-  state.stages[stage.code] = { status: 'RUNNING', startedAt: now() };
-  log(state, `${stage.agent} started`, stage.code);
-  await saveRun(state);
+  let stageRun = state.stages[stage.code];
+  if (!stageRun || !stageRun.messages) {
+    stageRun = {
+      status: 'RUNNING',
+      startedAt: now(),
+      messages: [{ role: 'user', content: buildTask(state, definition) }],
+      seenUrls: [],
+      requests: 0,
+    };
+    state.stages[stage.code] = stageRun;
+    log(state, `${stage.agent} started`, stage.code);
+    await saveRun(state);
+  }
+  const messages = stageRun.messages!;
+  const seenUrls = new Set(stageRun.seenUrls);
+  const tools = buildTools(state, definition, seenUrls);
+  const runnable = new Map(tools.filter(isRunnable).map((tool) => [tool.name, tool]));
 
-  const runner = getClient().beta.messages.toolRunner({
-    model: MODEL,
-    max_tokens: 16000,
-    max_iterations: MAX_ITERATIONS,
-    output_config: { effort: 'high' },
-    // On a safety decline the API re-runs the turn on a fallback model chosen by refusal category.
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-    tools: buildTools(state, definition, seenUrls),
-    messages: [{ role: 'user', content: buildTask(state, definition) }],
-  });
-
-  let last: BetaMessage | undefined;
-  for await (const message of runner) {
-    last = message;
-    // Yielded before this message's tool calls run, so citations can be checked against it.
-    collectSeenUrls(message, seenUrls);
-    // A long server-side search turn can pause; the runner does not resume it on its own.
-    if (message.stop_reason === 'pause_turn') {
-      runner.pushMessages({ role: 'assistant', content: message.content });
+  while (true) {
+    const elapsed = Date.now() - stepStart;
+    if (elapsed > STEP_BUDGET_MS) return false;
+    if ((stageRun.requests ?? 0) >= MAX_REQUESTS_PER_STAGE) {
+      throw new Error(`The agent hit the ${MAX_REQUESTS_PER_STAGE}-request limit before finishing.`);
     }
-  }
 
-  if (!last) throw new Error('The model returned no response.');
-  if (last.stop_reason === 'refusal') {
-    throw new Error(`The model declined this stage${last.stop_details?.category ? ` (${last.stop_details.category})` : ''}.`);
-  }
-  if (last.stop_reason === 'tool_use' || last.stop_reason === 'pause_turn') {
-    throw new Error(`The agent hit the ${MAX_ITERATIONS}-step limit before finishing.`);
-  }
-  if (last.stop_reason === 'max_tokens') {
-    throw new Error('The agent ran out of output tokens before finishing.');
-  }
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), STEP_DEADLINE_MS - elapsed);
+    let message: BetaMessage;
+    try {
+      message = await getClient().beta.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 16000,
+          output_config: { effort: 'high' },
+          // On a safety decline the API re-runs the turn on a fallback model chosen by refusal category.
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+          tools,
+          messages,
+        },
+        { signal: abort.signal },
+      );
+    } catch (error) {
+      // The call ran past the step deadline: nothing was added, so the next step repeats it.
+      if (error instanceof Anthropic.APIUserAbortError) return false;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
 
-  const summary = last.content
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
+    stageRun.requests = (stageRun.requests ?? 0) + 1;
+    // Echo the reply back unchanged so the conversation stays append-only.
+    messages.push({ role: 'assistant', content: message.content as BetaContentBlockParam[] });
+    collectSeenUrls(message, seenUrls);
+    stageRun.seenUrls = Array.from(seenUrls);
 
-  state.stages[stage.code] = { ...state.stages[stage.code], status: 'COMPLETED', summary, finishedAt: now() };
-  log(state, `${stage.agent} finished`, stage.code);
-  await saveRun(state);
+    if (message.stop_reason === 'refusal') {
+      throw new Error(`The model declined this stage${message.stop_details?.category ? ` (${message.stop_details.category})` : ''}.`);
+    }
+    if (message.stop_reason === 'max_tokens') throw new Error('The agent ran out of output tokens before finishing.');
+
+    // A long server-side search turn can pause; sending the conversation back resumes it.
+    if (message.stop_reason === 'pause_turn') {
+      await saveRun(state);
+      continue;
+    }
+
+    const toolUses = message.content.filter((block) => block.type === 'tool_use');
+    if (message.stop_reason === 'tool_use' && toolUses.length > 0) {
+      const results: BetaToolResultBlockParam[] = [];
+      for (const block of toolUses) results.push(await runTool(runnable.get(block.name), block));
+      messages.push({ role: 'user', content: results });
+      await saveRun(state);
+      continue;
+    }
+
+    const summary = message.content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
+      .trim();
+    // The finished conversation is no longer needed and would bloat every read of the run.
+    state.stages[stage.code] = {
+      status: 'COMPLETED',
+      summary,
+      startedAt: stageRun.startedAt,
+      finishedAt: now(),
+      requests: stageRun.requests,
+    };
+    log(state, `${stage.agent} finished`, stage.code);
+    await saveRun(state);
+    return true;
+  }
 }
 
 const approvedGates = (state: AgentRunState) =>
   (Object.keys(state.gates) as GateCode[]).filter((code) => state.gates[code]?.decision === 'APPROVED');
 
-// Runs agents stage by stage until a gate needs a human, a stage has no agent yet, or a stage fails.
-async function continuePipeline(state: AgentRunState) {
-  try {
-    while (true) {
-      const stage = getStage(state.currentStage);
-      const definition = agentDefinitions[stage.code];
+// Moves the run forward until a gate needs a human, a stage has no agent yet, or the step's time runs out.
+async function advance(state: AgentRunState, stepStart: number) {
+  while (true) {
+    const stage = getStage(state.currentStage);
+    const definition = agentDefinitions[stage.code];
 
-      if (state.stages[stage.code]?.status !== 'COMPLETED') {
-        if (!definition) {
-          state.status = 'STOPPED';
-          log(state, `Stopped: the ${stage.agent} has not been built yet`, stage.code);
-          await saveRun(state);
-          return;
-        }
-        await runStage(state, definition);
-      }
-
-      if (stage.exitGate && state.gates[stage.exitGate]?.decision !== 'APPROVED') {
-        const gate = getGate(stage.exitGate);
-        const gateState = state.gates[gate.code];
-
-        if (!gate.humanApproval && gateState?.recommendation === 'APPROVE') {
-          state.gates[gate.code] = { ...gateState, decision: 'APPROVED', decidedBy: 'Orchestrator', decidedAt: now() };
-          log(state, `${gate.code} ${gate.title}: approved by the orchestrator on the agent's recommendation`, stage.code);
-        } else {
-          state.status = 'AWAITING_APPROVAL';
-          log(state, `Waiting for ${gate.approverRole} to decide ${gate.code} ${gate.title}`, stage.code);
-          await saveRun(state);
-          return;
-        }
-      }
-
-      const next = nextStage(stage.code, approvedGates(state));
-      if (!next) {
+    if (state.stages[stage.code]?.status !== 'COMPLETED') {
+      if (!definition) {
         state.status = 'STOPPED';
-        log(state, 'Pipeline complete', stage.code);
-        await saveRun(state);
+        log(state, `Stopped: the ${stage.agent} has not been built yet`, stage.code);
         return;
       }
-      state.currentStage = next;
-      await saveRun(state);
+      if (!(await workOnStage(state, definition, stepStart))) return;
     }
-  } catch (error) {
-    const stage = state.currentStage;
-    state.status = 'FAILED';
-    state.error = error instanceof Anthropic.APIError ? `Claude API error ${error.status}: ${error.message}` : String(error);
-    state.stages[stage] = { ...state.stages[stage], status: 'FAILED', finishedAt: now() };
-    log(state, `Failed: ${state.error}`, stage);
+
+    if (stage.exitGate && state.gates[stage.exitGate]?.decision !== 'APPROVED') {
+      const gate = getGate(stage.exitGate);
+      const gateState = state.gates[gate.code];
+
+      if (!gate.humanApproval && gateState?.recommendation === 'APPROVE') {
+        state.gates[gate.code] = { ...gateState, decision: 'APPROVED', decidedBy: 'Orchestrator', decidedAt: now() };
+        log(state, `${gate.code} ${gate.title}: approved by the orchestrator on the agent's recommendation`, stage.code);
+      } else {
+        state.status = 'AWAITING_APPROVAL';
+        log(state, `Waiting for ${gate.approverRole} to decide ${gate.code} ${gate.title}`, stage.code);
+        return;
+      }
+    }
+
+    const next = nextStage(stage.code, approvedGates(state));
+    if (!next) {
+      state.status = 'STOPPED';
+      log(state, 'Pipeline complete', stage.code);
+      return;
+    }
+    state.currentStage = next;
     await saveRun(state);
   }
 }
 
 export class PipelineError extends Error {}
 
-// Starts or resumes the run. Returns once the run is marked RUNNING; the agents continue in the background.
+const leaseActive = (state: AgentRunState) => Boolean(state.leaseUntil && Date.parse(state.leaseUntil) > Date.now());
+
+// Runs one step of the pipeline within this request. Call it again while the run is RUNNING;
+// each call resumes from the saved state.
+export async function runStep(assetId: string): Promise<AgentRunState> {
+  const stepStart = Date.now();
+  const state = await loadRun(assetId);
+  if (state.status !== 'RUNNING' || leaseActive(state)) return state;
+
+  state.leaseUntil = new Date(stepStart + LEASE_MS).toISOString();
+  await saveRun(state);
+
+  try {
+    await advance(state, stepStart);
+  } catch (error) {
+    const stage = state.currentStage;
+    state.status = 'FAILED';
+    state.error = errorMessage(error);
+    state.stages[stage] = { ...state.stages[stage], status: 'FAILED', finishedAt: now() };
+    log(state, `Failed: ${state.error}`, stage);
+  } finally {
+    state.leaseUntil = undefined;
+    await saveRun(state);
+  }
+  return state;
+}
+
+// Starts a new run, or retries a failed stage. The agents then advance through runStep.
 export async function startRun(assetId: string, options: { reset?: boolean } = {}) {
   if (!mockAssets.some((asset) => asset.assetId === assetId)) throw new PipelineError(`Unknown asset ${assetId}`);
 
@@ -350,8 +437,6 @@ export async function startRun(assetId: string, options: { reset?: boolean } = {
   state.error = undefined;
   log(state, options.reset ? 'Run started' : 'Run resumed');
   await saveRun(state);
-
-  void continuePipeline(state);
   return state;
 }
 
@@ -372,17 +457,20 @@ export async function decideGate(
 
   state.gates[gateCode] = { ...state.gates[gateCode], decision, decidedBy, decidedAt: now(), notes };
   log(state, `${gateCode} ${gate.title}: ${decision.toLowerCase()} by ${decidedBy}${notes ? ` (${notes})` : ''}`, stage.code);
-
-  if (decision === 'REJECTED') {
-    state.status = 'STOPPED';
-    await saveRun(state);
-    return state;
-  }
-
-  state.status = 'RUNNING';
+  state.status = decision === 'APPROVED' ? 'RUNNING' : 'STOPPED';
   await saveRun(state);
-  void continuePipeline(state);
   return state;
+}
+
+// The run as API clients see it: the saved conversations stay server-side.
+export function publicRun(state: AgentRunState) {
+  const stages = Object.fromEntries(
+    Object.entries(state.stages).map(([code, stageRun]) => {
+      const { messages, seenUrls, ...rest } = stageRun ?? {};
+      return [code, rest];
+    }),
+  );
+  return { ...state, stages, stepInProgress: leaseActive(state) };
 }
 
 export const getRun = loadRun;

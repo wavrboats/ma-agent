@@ -261,6 +261,16 @@ create table if not exists public.audit_log (
   created_at timestamptz not null default now()
 );
 
+-- Agent run state: one row per asset, written by the agent runner with the service-role key.
+-- Row level security is on with no policies, so browsers using the anon key cannot read or write it.
+create table if not exists public.agent_run_states (
+  asset_id text primary key,
+  state jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.agent_run_states enable row level security;
+
 create index if not exists idx_assets_created_by on public.assets(created_by);
 create index if not exists idx_documents_asset_id on public.documents(asset_id);
 create index if not exists idx_tasks_asset_id on public.tasks(asset_id);

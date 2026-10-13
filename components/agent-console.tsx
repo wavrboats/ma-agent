@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAgentBuilt } from '@/lib/agents/definitions';
 import type { AgentRunState } from '@/lib/agents/types';
 import { getGate, pipelineStages } from '@/lib/pipeline';
 
 type AssetOption = { assetId: string; name: string };
+type RunView = AgentRunState & { stepInProgress?: boolean };
 
 const statusStyles: Record<string, string> = {
   IDLE: 'bg-slate-800 text-slate-300',
@@ -36,7 +37,10 @@ function Pill({ value }: { value: string }) {
 
 export function AgentConsole({ assets }: { assets: AssetOption[] }) {
   const [assetId, setAssetId] = useState(assets[0]?.assetId ?? 'AS-001');
-  const [run, setRun] = useState<AgentRunState | null>(null);
+  const [run, setRun] = useState<RunView | null>(null);
+  const [stepping, setStepping] = useState(false);
+  const currentAsset = useRef(assetId);
+  currentAsset.current = assetId;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [approver, setApprover] = useState('');
@@ -45,7 +49,8 @@ export function AgentConsole({ assets }: { assets: AssetOption[] }) {
   const refresh = useCallback(async () => {
     const response = await fetch(`/api/agents?assetId=${encodeURIComponent(assetId)}`, { cache: 'no-store' });
     const data = await response.json();
-    setRun(data.run);
+    if (!response.ok) setError(data.error ?? 'Could not load the run');
+    else if (currentAsset.current === assetId) setRun(data.run);
   }, [assetId]);
 
   useEffect(() => {
@@ -58,6 +63,29 @@ export function AgentConsole({ assets }: { assets: AssetOption[] }) {
     const timer = setInterval(refresh, 3000);
     return () => clearInterval(timer);
   }, [run?.status, refresh]);
+
+  // Each step runs the agents for a few minutes inside one request, which keeps every request under
+  // the hosting time limit. While the run is active, this page asks for the next step as soon as the
+  // previous one returns.
+  useEffect(() => {
+    if (run?.status !== 'RUNNING' || run.stepInProgress || stepping) return;
+    const stepAsset = assetId;
+    setStepping(true);
+    fetch('/api/agents/step', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assetId: stepAsset }),
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (currentAsset.current !== stepAsset) return;
+        if (data.run) setRun(data.run);
+        else if (data.error) setError(data.error);
+      })
+      // A dropped step is picked up again once its lease expires and the poll sees the run idle.
+      .catch(() => undefined)
+      .finally(() => setStepping(false));
+  }, [run?.status, run?.stepInProgress, stepping, assetId]);
 
   const post = async (url: string, body: object) => {
     setBusy(true);
@@ -85,7 +113,7 @@ export function AgentConsole({ assets }: { assets: AssetOption[] }) {
             <div className="badge mb-3">Agent console</div>
             <h1 className="text-3xl font-semibold tracking-tight text-white">Pipeline agents</h1>
             <p className="mt-2 text-sm text-slate-400">
-              Agents research and record evidence. People decide the gates.
+              Agents research and record evidence. People decide the gates. A run moves forward while this page is open.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
