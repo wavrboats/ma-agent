@@ -66,3 +66,28 @@ Deploy in increments. Don't automate conclusions until the evidence behind them 
 4. Valuation model + strategic buyer ranking
 5. Teaser/CIM generation + deal CRM
 6. Pilot on Amoun + human review + refine
+
+## Running the agents
+
+The first three agents run on Claude through the Anthropic SDK: Intake (01), Screening (02) and DD (03). Agent code is in `lib/agents/`, and the console is at `/agents`.
+
+1. Set `ANTHROPIC_API_KEY` in `.env.local`.
+2. Run `npm run dev`, open `/agents`, pick an asset and press **Run agents**.
+
+What happens:
+
+- Each agent works through its stage's workstreams. It records its work with four tools: `record_finding`, `record_risk`, `request_document` and `recommend_gate`. Screening and DD can also search and fetch web pages.
+- The runner enforces the data rule on every finding:
+  - A finding without a valid source URL, date, confidence or status is rejected, and the agent is told to fix it.
+  - A finding is capped at UNVERIFIED if it cites a page the agent never opened in that stage, or if it rests only on the owner's intake data.
+  - Unknown values are stored as `null`.
+- Agents only recommend on gates. G0 is not a human gate, so the orchestrator approves it when the Screening Agent recommends APPROVE; otherwise the CEO decides it. The run stops at G1 until Legal approves or rejects it in the console. The decision must name the person who made it, and the audit log records it.
+- After G1 approval the run moves to stage 04 and stops, because the Engineering Agent is not built yet.
+
+Each stage calls `claude-opus-5-5` at `high` effort. Server-side refusal fallback (`fallbacks: "default"`) is on: if the model declines a turn for safety reasons, the API retries it on a fallback model. Run state is saved to `.data/agent-runs/<assetId>.json` until the Supabase tables are connected.
+
+API:
+
+- `GET /api/agents?assetId=AS-001`: current run state.
+- `POST /api/agents` `{ assetId, reset? }`: start, resume or retry a run. Agents continue in the background, so poll `GET` for progress.
+- `POST /api/agents/gates` `{ assetId, gate, decision: "APPROVED" | "REJECTED", decidedBy, notes? }`: record a human gate decision.
