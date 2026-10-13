@@ -22,6 +22,7 @@ export type AssetInput = {
   transactionType?: string;
   operatingStatus?: string;
   askingPrice?: string;
+  documentDetails?: string;
   attachments?: unknown;
 };
 
@@ -55,6 +56,7 @@ type AssetRow = {
   operating_status: string | null;
   asking_price: number | null;
   asking_price_text: string | null;
+  document_details: string | null;
   attachments: AssetAttachment[] | null;
   current_stage: string;
   created_at: string;
@@ -75,6 +77,7 @@ const fromRow = (row: AssetRow): Asset => ({
   operatingStatus: row.operating_status ?? '',
   askingPrice: row.asking_price,
   askingPriceText: row.asking_price_text,
+  documentDetails: row.document_details ?? '',
   attachments: row.attachments ?? [],
   status: row.current_stage,
   createdAt: row.created_at.slice(0, 10),
@@ -94,6 +97,7 @@ const toRow = (asset: Asset) => ({
   operating_status: asset.operatingStatus || null,
   asking_price: asset.askingPrice,
   asking_price_text: asset.askingPriceText ?? null,
+  document_details: asset.documentDetails || null,
   attachments: asset.attachments ?? [],
   current_stage: asset.status,
 });
@@ -165,6 +169,7 @@ export async function createAsset(input: AssetInput): Promise<Asset> {
     transactionType: clean(input.transactionType),
     operatingStatus: clean(input.operatingStatus),
     ...parsePrice(input.askingPrice),
+    documentDetails: clean(input.documentDetails).slice(0, 50_000),
     // Attachments live in Supabase Storage, so they are only kept when Supabase is configured.
     attachments: getServerSupabase() ? cleanAttachments(input.attachments) : [],
     status: 'INTAKE',

@@ -32,3 +32,23 @@ body {
 .badge {
   @apply inline-flex items-center rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-300;
 }
+
+/* Pipeline graph: small bubbles pop in, drift gently, and a waiting gate pulses. */
+@keyframes graph-pop {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes graph-drift {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(1.5px, -2px); }
+}
+@keyframes graph-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.graph-pop { transform-box: fill-box; transform-origin: center; animation: graph-pop 0.35s ease-out both; }
+.graph-drift { animation: graph-drift 5s ease-in-out infinite; }
+.graph-pulse { animation: graph-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .graph-pop, .graph-drift, .graph-pulse { animation: none; }
+}

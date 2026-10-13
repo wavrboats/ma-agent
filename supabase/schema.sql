@@ -118,6 +118,8 @@ alter table public.assets add column if not exists industry text;
 alter table public.assets add column if not exists asking_price_text text;
 -- Photos and PDFs kept with the asset: [{ path, name, contentType, size }] in the asset-files bucket.
 alter table public.assets add column if not exists attachments jsonb not null default '[]'::jsonb;
+-- Free text copied from the asset's documents, read by the agents with the intake record.
+alter table public.assets add column if not exists document_details text;
 alter table public.tasks add column if not exists stage text;
 alter table public.approvals add column if not exists gate text;
 

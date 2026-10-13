@@ -18,7 +18,11 @@ const defaultForm = {
   transactionType: '',
   operatingStatus: '',
   askingPrice: '',
+  // Free text copied from the asset's documents: the agents read it with the rest of the intake record.
+  documentDetails: '',
 };
+
+const MAX_DETAILS_CHARS = 50_000;
 
 type AssetUploadRecord = Partial<typeof defaultForm>;
 
@@ -204,7 +208,7 @@ export function AssetIntakeForm() {
   const [submitError, setSubmitError] = useState('');
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>(null);
   const [reading, setReading] = useState<string | null>(null);
-  const [savedOnDevice, setSavedOnDevice] = useState<string | null>(null);
+  const [savedOnDevice, setSavedOnDevice] = useState<{ id: string; name: string } | null>(null);
 
   const summary = useMemo(() => [form.name, form.assetClass, form.country].filter(Boolean).join(' • '), [form]);
 
@@ -322,8 +326,9 @@ export function AssetIntakeForm() {
         return;
       }
 
-      // A field the file does not state is cleared rather than left with older values.
-      const next = { ...defaultForm };
+      // A field the file does not state is cleared rather than left with older values. The pasted
+      // document details are the user's own text, so they are kept.
+      const next = { ...defaultForm, documentDetails: form.documentDetails };
       const missing: string[] = [];
       for (const [formField, extractedField, label] of extractedFieldMap) {
         const value = fields[extractedField];
@@ -372,8 +377,8 @@ export function AssetIntakeForm() {
     setSubmitError('');
     try {
       if (capabilities.assetStore === 'none') {
-        await saveDeviceDraft(form, attachments.map(({ name, type, blob }) => ({ name, type, blob })));
-        setSavedOnDevice(form.name);
+        const draft = await saveDeviceDraft(form, attachments.map(({ name, type, blob }) => ({ name, type, blob })));
+        setSavedOnDevice({ id: draft.id, name: form.name });
         setForm(defaultForm);
         freePreviews(attachments);
         setAttachments([]);
@@ -416,11 +421,18 @@ export function AssetIntakeForm() {
 
       {savedOnDevice && (
         <div role="status" className="mb-6 rounded-2xl border border-emerald-700/50 bg-emerald-500/10 p-4 text-sm text-emerald-200">
-          Saved {savedOnDevice} on this device.{' '}
-          <Link href="/assets" className="underline">
-            See it in the portfolio
-          </Link>
-          .
+          <p>Saved {savedOnDevice.name} on this device.</p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <Link
+              href={`/agents/test?draft=${encodeURIComponent(savedOnDevice.id)}`}
+              className="rounded-xl bg-brand-500 px-4 py-2 font-semibold text-white"
+            >
+              Test run agents
+            </Link>
+            <Link href="/assets" className="rounded-xl border border-emerald-700/50 px-4 py-2">
+              See it in the portfolio
+            </Link>
+          </div>
         </div>
       )}
 
@@ -450,7 +462,7 @@ export function AssetIntakeForm() {
           )}
           {onDevice && (
             <p className="mt-2 text-xs text-amber-300">
-              No database is connected yet, so assets are saved on this device only and the agents cannot run on them.
+              No database is connected yet, so assets are saved on this device only. You can try them with a rule-based test run; the real agents need the database and the Anthropic key.
             </p>
           )}
           {capabilities?.assetStore === 'local-file' && attachments.length > 0 && (
@@ -606,6 +618,25 @@ export function AssetIntakeForm() {
               rows={3}
               className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none transition focus:border-brand-400"
             />
+          </label>
+
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-sm text-slate-300">Document details</span>
+            <span className="block text-xs text-slate-500">
+              Paste or type what the asset&apos;s documents say: brochures, title papers, floor areas, utilities. The agents read this
+              together with the fields above.
+            </span>
+            <textarea
+              value={form.documentDetails}
+              onChange={(e) => updateField('documentDetails', e.target.value)}
+              rows={10}
+              maxLength={MAX_DETAILS_CHARS}
+              placeholder="e.g. Total building area 906 m². Ground floor, mezzanine, 6 typical floors and a roof floor…"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none transition focus:border-brand-400"
+            />
+            <span className="block text-right text-[11px] text-slate-500">
+              {form.documentDetails.length.toLocaleString()} / {MAX_DETAILS_CHARS.toLocaleString()} characters
+            </span>
           </label>
         </div>
 

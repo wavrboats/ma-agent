@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { deleteDeviceDraft, listDeviceDrafts } from '@/lib/device-drafts';
 import type { DeviceDraft } from '@/lib/device-drafts';
@@ -40,7 +41,7 @@ export function DeviceDrafts() {
     <section className="card mb-8 p-5">
       <h2 className="text-lg font-semibold text-white">Saved on this device ({drafts.length})</h2>
       <p className="mt-1 text-sm text-slate-400">
-        These were saved in this browser because no database is connected. They stay on this device and the agents cannot run on them.
+        These were saved in this browser because no database is connected. They stay on this device. The real agents cannot run on them, but a rule-based test run can.
       </p>
       <div className="mt-4 space-y-4">
         {drafts.map((draft) => (
@@ -54,11 +55,27 @@ export function DeviceDrafts() {
                   {new Date(draft.savedAt).toLocaleString()}
                 </p>
               </div>
-              <button onClick={() => remove(draft.id)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300">
-                Delete
-              </button>
+              <div className="flex gap-2">
+                <Link
+                  href={`/agents/test?draft=${encodeURIComponent(draft.id)}`}
+                  className="rounded-lg bg-brand-500 px-3 py-1 text-xs font-semibold text-white"
+                >
+                  Test run agents
+                </Link>
+                <button onClick={() => remove(draft.id)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300">
+                  Delete
+                </button>
+              </div>
             </div>
             {draft.fields.description && <p className="mt-3 text-sm text-slate-300">{draft.fields.description}</p>}
+            {draft.fields.documentDetails && (
+              <details className="mt-3 text-sm text-slate-300">
+                <summary className="cursor-pointer text-xs text-slate-400">
+                  Document details ({draft.fields.documentDetails.length.toLocaleString()} characters)
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap">{draft.fields.documentDetails}</p>
+              </details>
+            )}
             {draft.previews.length > 0 && (
               <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
                 {draft.previews.map((preview, index) => (
