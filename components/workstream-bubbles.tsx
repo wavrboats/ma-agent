@@ -22,8 +22,9 @@ function layout(count: number) {
   const points: { x: number; y: number }[] = [{ x: 0, y: 0 }];
   for (let ring = 1; points.length < count; ring += 1) {
     const radius = ring * gap;
-    const capacity = Math.max(1, Math.floor((2 * Math.PI * radius) / gap));
-    for (let i = 0; i < capacity && points.length < count; i += 1) {
+    // A partly filled outer ring is spread evenly all the way round, so the cluster stays centred.
+    const capacity = Math.min(Math.max(1, Math.floor((2 * Math.PI * radius) / gap)), count - points.length);
+    for (let i = 0; i < capacity; i += 1) {
       const angle = (i / capacity) * Math.PI * 2 - Math.PI / 2 + ring * 0.3;
       points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
     }

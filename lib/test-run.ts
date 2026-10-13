@@ -354,7 +354,7 @@ export function runTestPipeline(
 
   // ---------- 04 ASSESS ----------
   const technical = factLines.filter(({ heading, line }) => heading !== 'General' && TECHNICAL.test(line) && !LOCATION.test(line) && usable(line));
-  for (const { line } of technical) addFinding('ASSESS', 'Technical condition', line, line, null, 0.5);
+  for (const { heading, line } of technical) addFinding('ASSESS', heading, line, line, null, 0.5);
   if (builtUp > 0) {
     addFinding(
       'ASSESS',
@@ -375,11 +375,13 @@ export function runTestPipeline(
   complete('ASSESS', `${technical.length} technical facts recorded from the material${builtUp ? `; built-up area about ${fmt(builtUp)} m²` : ''}. Condition, age and safety need a site inspection.`);
 
   // ---------- 05 MARKET ----------
-  const demand = factLines.filter(({ heading, line }) => heading !== 'General' && LOCATION.test(line) && usable(line));
-  for (const { line } of demand) addFinding('MARKET', 'Location / demand drivers', line, line, null, 0.5);
+  // Location sections count whole, so names without a location word (a hotel's name) are kept.
+  const demand = factLines.filter(
+    ({ heading, line }) => heading !== 'General' && (LOCATION.test(line) || /LOCATION|SITE ANALYSIS|HOTEL|EMBASS|ACCESS|LANDMARK|EXPAT|FOREIGN/.test(heading)) && usable(line),
+  );
+  for (const { heading, line } of demand) addFinding('MARKET', heading, line, line, null, 0.5);
   requestDocument('MARKET', 'Local selling prices / quotes', 'Recent sale prices per m² for comparable buildings in the area', 'Needed to size the market and value the asset', 'Brokers / research');
   requestDocument('MARKET', 'Market growth / scenarios', 'Rents and occupancy for serviced and furnished apartments nearby', 'Needed for an income-based case', 'Operators / brokers');
-  output('MARKET', 'Demand drivers named in the material', demand.map(({ line }) => line));
   output('MARKET', 'Market data still needed', ['Comparable sale prices per m²', 'Furnished and serviced-apartment rents and occupancy', 'New supply planned nearby', 'Demand from embassies, expats and visitors']);
   complete('MARKET', `${demand.length} location and demand facts recorded. No market prices, rents or occupancy figures were provided, so the market is not sized.`);
 
