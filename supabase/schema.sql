@@ -109,10 +109,168 @@ create table if not exists public.reports (
   created_at timestamptz not null default now()
 );
 
+-- Asset → Exit pipeline: stages, gates and the remaining shared-database tables.
+-- One asset ID runs through every stage. Unknown values stay null, never 0.
+
+alter table public.assets add column if not exists current_stage text not null default 'INTAKE';
+alter table public.tasks add column if not exists stage text;
+alter table public.approvals add column if not exists gate text;
+
+create table if not exists public.pipeline_stages (
+  code text primary key,
+  stage_number int not null unique,
+  title text not null,
+  agent text not null,
+  layer text not null,
+  exit_gate text
+);
+
+create table if not exists public.stage_gates (
+  code text primary key,
+  title text not null,
+  after_stage text not null references public.pipeline_stages(code),
+  human_approval boolean not null,
+  approver_role text not null
+);
+
+insert into public.pipeline_stages (code, stage_number, title, agent, layer, exit_gate) values
+  ('INTAKE', 1, 'Asset registration', 'Intake Agent', 'Orchestrator', null),
+  ('SCREEN', 2, 'Mandate / red flags', 'Screening Agent', 'Orchestrator', 'G0'),
+  ('VERIFY', 3, 'Legal + ownership', 'DD Agent', 'Verification', 'G1'),
+  ('ASSESS', 4, 'Technical + ESG', 'Engineering Agent', 'Analysis', null),
+  ('MARKET', 5, 'Demand + competitors', 'Research Agent', 'Source Collector', null),
+  ('MODEL', 6, 'Financial normalization', 'Finance Agent', 'Analysis', 'G2'),
+  ('VALUE', 7, 'Valuation + scenarios', 'Valuation Agent', 'Analysis', 'G3'),
+  ('STRATEGY', 8, 'Exit / reposition / JV', 'Strategy Agent', 'Analysis', null),
+  ('BUYERS', 9, 'Longlist → shortlist', 'Buyer Agent', 'Buyer Intelligence', 'G4'),
+  ('MATERIALS', 10, 'Teaser + CIM + data room', 'Deal Prep Agent', 'Deal Execution', null),
+  ('OUTREACH', 11, 'NDA + buyer engagement', 'Origination Agent', 'Deal Execution', null),
+  ('EXECUTE', 12, 'Offers → SPA → close', 'Execution Agent', 'Deal Execution', 'G5')
+on conflict (code) do nothing;
+
+insert into public.stage_gates (code, title, after_stage, human_approval, approver_role) values
+  ('G0', 'Mandate accepted', 'SCREEN', false, 'CEO'),
+  ('G1', 'Identity & ownership verified', 'VERIFY', true, 'Legal'),
+  ('G2', 'Asset commercially viable', 'MODEL', false, 'CEO'),
+  ('G3', 'Valuation approved', 'VALUE', true, 'Chairman'),
+  ('G4', 'Buyer list approved', 'BUYERS', true, 'Chairman'),
+  ('G5', 'Binding terms approved', 'EXECUTE', true, 'Chairman')
+on conflict (code) do nothing;
+
+create table if not exists public.entities (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid references public.assets(id) on delete cascade,
+  name text not null,
+  entity_type text,
+  registration_number text,
+  country text,
+  matched_entity_id uuid references public.entities(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.sources (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  url text,
+  source_type text,
+  reliability numeric check (reliability between 0 and 1),
+  accessed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- Data rule: every finding carries source URL + date + confidence + owner + status.
+alter table public.findings add column if not exists source_id uuid references public.sources(id);
+alter table public.findings add column if not exists source_url text;
+alter table public.findings add column if not exists source_date date;
+alter table public.findings add column if not exists owner text;
+alter table public.findings add column if not exists status text not null default 'UNVERIFIED';
+alter table public.findings add column if not exists stage text;
+alter table public.findings add column if not exists workstream text;
+
+create table if not exists public.risks (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid references public.assets(id) on delete cascade,
+  finding_id uuid references public.findings(id),
+  workstream text,
+  title text not null,
+  severity text,
+  likelihood text,
+  mitigation text,
+  owner text,
+  status text not null default 'OPEN',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.financials (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid references public.assets(id) on delete cascade,
+  period text not null,
+  metric text not null,
+  value numeric,
+  currency text,
+  is_normalized boolean not null default false,
+  source_id uuid references public.sources(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.markets (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid references public.assets(id) on delete cascade,
+  hs_code text,
+  country text,
+  year int,
+  metric text not null,
+  value numeric,
+  unit text,
+  source_id uuid references public.sources(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.buyers (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid references public.assets(id) on delete cascade,
+  entity_id uuid references public.entities(id),
+  name text not null,
+  buyer_type text,
+  country text,
+  fit_score numeric,
+  evidence_score numeric,
+  status text not null default 'LONGLIST',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.contacts (
+  id uuid primary key default gen_random_uuid(),
+  buyer_id uuid references public.buyers(id) on delete cascade,
+  full_name text not null,
+  title text,
+  email text,
+  phone text,
+  is_decision_maker boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.audit_log (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid references public.assets(id) on delete cascade,
+  actor text not null,
+  action text not null,
+  entity_type text,
+  entity_id uuid,
+  details jsonb,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_assets_created_by on public.assets(created_by);
 create index if not exists idx_documents_asset_id on public.documents(asset_id);
 create index if not exists idx_tasks_asset_id on public.tasks(asset_id);
 create index if not exists idx_findings_asset_id on public.findings(asset_id);
+create index if not exists idx_entities_asset_id on public.entities(asset_id);
+create index if not exists idx_risks_asset_id on public.risks(asset_id);
+create index if not exists idx_financials_asset_id on public.financials(asset_id);
+create index if not exists idx_markets_asset_id on public.markets(asset_id);
+create index if not exists idx_buyers_asset_id on public.buyers(asset_id);
+create index if not exists idx_audit_log_asset_id on public.audit_log(asset_id);
 
 alter table public.assets enable row level security;
 alter table public.documents enable row level security;

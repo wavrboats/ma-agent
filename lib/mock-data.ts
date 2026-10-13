@@ -1,17 +1,6 @@
-export type AssetStatus =
-  | 'INTAKE'
-  | 'SCREENING'
-  | 'VERIFICATION'
-  | 'DUE_DILIGENCE'
-  | 'MARKET_RESEARCH'
-  | 'TECHNICAL_ASSESSMENT'
-  | 'FINANCIAL_MODEL'
-  | 'VALUATION'
-  | 'EXIT_STRATEGY'
-  | 'BUYER_INTELLIGENCE'
-  | 'DEAL_PREP'
-  | 'NEGOTIATION'
-  | 'CLOSING';
+import type { StageCode } from '@/lib/pipeline';
+
+export type AssetStatus = StageCode;
 
 export type DepartmentStatus =
   | 'QUEUED'
@@ -51,7 +40,7 @@ export const mockAssets = [
     transactionType: 'Share Sale',
     operatingStatus: 'Operational',
     askingPrice: 32000000,
-    status: 'DUE_DILIGENCE' as AssetStatus,
+    status: 'VERIFY' as AssetStatus,
     createdAt: '2026-10-07T00:00:00Z',
   },
 ];

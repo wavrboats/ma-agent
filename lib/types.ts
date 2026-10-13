@@ -1,3 +1,6 @@
+import { pipelineStages } from '@/lib/pipeline';
+import type { ApproverRole, FindingStatus, GateCode, StageCode } from '@/lib/pipeline';
+
 export type Asset = {
   id: string;
   assetId: string;
@@ -19,11 +22,13 @@ export type WorkflowTask = {
   id: string;
   assetId: string;
   department: string;
+  stage: StageCode;
   title: string;
   status: 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'NEEDS_REVIEW' | 'COMPLETED';
   owner: string;
   dueDate: string;
-  confidence: number;
+  // null means not yet assessed: unknown ≠ zero.
+  confidence: number | null;
   blockers: string[];
   dependsOn: string[];
 };
@@ -35,6 +40,8 @@ export type WorkflowFinding = {
   title: string;
   text: string;
   confidence: number;
+  owner: string;
+  status: FindingStatus;
   source: {
     name: string;
     url: string;
@@ -44,15 +51,16 @@ export type WorkflowFinding = {
 };
 
 export type ApprovalGate = {
+  gate: GateCode;
   action: string;
-  requiredRole: 'Chairman' | 'CEO' | 'Legal' | 'Finance';
+  requiredRole: ApproverRole;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   reason: string;
 };
 
 export type AssetWorkflowState = {
   assetId: string;
-  stage: string;
+  stage: StageCode;
   status: 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'NEEDS_REVIEW' | 'COMPLETED';
   tasks: WorkflowTask[];
   findings: WorkflowFinding[];
@@ -89,26 +97,12 @@ export const mockAssets: Asset[] = [
     transactionType: 'Asset Sale',
     operatingStatus: 'Operational',
     askingPrice: 32000000,
-    status: 'DUE_DILIGENCE',
+    status: 'VERIFY',
     createdAt: '2026-10-08',
   },
 ];
 
-export const workflowStages = [
-  'INTAKE',
-  'SCREENING',
-  'VERIFICATION',
-  'DUE_DILIGENCE',
-  'MARKET_RESEARCH',
-  'TECHNICAL_ASSESSMENT',
-  'FINANCIAL_MODEL',
-  'VALUATION',
-  'EXIT_STRATEGY',
-  'BUYER_INTELLIGENCE',
-  'DEAL_PREP',
-  'NEGOTIATION',
-  'CLOSING',
-];
+export const workflowStages: StageCode[] = pipelineStages.map((stage) => stage.code);
 
 export const departmentProgress = [
   { name: 'CEO AI Agent', status: 'RUNNING', progress: 82, owner: 'Chairman / CEO' },

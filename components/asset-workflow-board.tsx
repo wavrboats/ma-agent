@@ -1,4 +1,7 @@
-export function AssetWorkflowBoard({ workflow }: { workflow: any }) {
+import { pipelineStages } from '@/lib/pipeline';
+import type { AssetWorkflowState, WorkflowTask } from '@/lib/types';
+
+export function AssetWorkflowBoard({ workflow }: { workflow: AssetWorkflowState }) {
   return (
     <div className="card p-5">
       <div className="mb-4 flex items-center justify-between">
@@ -9,22 +12,23 @@ export function AssetWorkflowBoard({ workflow }: { workflow: any }) {
       </div>
 
       <div className="mb-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {['INTAKE', 'SCREENING', 'VERIFICATION', 'DUE_DILIGENCE'].map((stage, index) => (
+        {pipelineStages.map((stage) => (
           <div
-            key={stage}
+            key={stage.code}
             className={`rounded-xl border p-2 text-center text-xs ${
-              stage === workflow.stage
+              stage.code === workflow.stage
                 ? 'border-brand-500/40 bg-brand-500/10 text-brand-200'
                 : 'border-slate-700 bg-slate-950 text-slate-300'
             }`}
           >
-            {stage}
+            {String(stage.number).padStart(2, '0')} {stage.code}
+            {stage.exitGate && <span className="ml-1 text-amber-300">→ {stage.exitGate}</span>}
           </div>
         ))}
       </div>
 
       <div className="space-y-4">
-        {workflow.tasks.map((task: any) => (
+        {workflow.tasks.map((task: WorkflowTask) => (
           <div key={task.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -37,10 +41,12 @@ export function AssetWorkflowBoard({ workflow }: { workflow: any }) {
             </div>
             <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
               <span>Owner: {task.owner}</span>
-              <span>Confidence: {(task.confidence * 100).toFixed(0)}%</span>
+              <span>
+                Confidence: {task.confidence === null ? 'Unknown' : `${(task.confidence * 100).toFixed(0)}%`}
+              </span>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800">
-              <div className="h-full rounded-full bg-brand-500" style={{ width: `${task.confidence * 100}%` }} />
+              <div className="h-full rounded-full bg-brand-500" style={{ width: `${(task.confidence ?? 0) * 100}%` }} />
             </div>
             {task.blockers.length > 0 && (
               <div className="mt-3 text-xs text-amber-300">Blockers: {task.blockers.join(' • ')}</div>

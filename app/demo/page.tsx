@@ -54,8 +54,8 @@ export default function AssetDemoPage() {
             <div className="card p-5">
               <h3 className="text-lg font-semibold text-white">Approval gates</h3>
               <ul className="mt-4 space-y-2 text-sm text-slate-300">
-                {workflow.approvals.map((gate: { action: string; requiredRole: string; status: string }) => (
-                  <li key={gate.action} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                {workflow.approvals.map((gate) => (
+                  <li key={gate.gate} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
                     {gate.action} • {gate.requiredRole} • {gate.status}
                   </li>
                 ))}
